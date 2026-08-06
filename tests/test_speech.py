@@ -1,0 +1,138 @@
+"""
+Unit tests for the JARVIS Speech Subsystem.
+"""
+
+import asyncio
+from unittest import mock
+import pytest
+import numpy as np
+
+from config.config import load_settings
+from speech.microphone import MicrophoneManager
+from speech.recognizer import FasterWhisperRecognizer
+from speech.synthesizer import PiperSynthesizer
+from speech.wakeword import WakeWordEngine
+from speech.manager import SpeechManager
+
+
+def test_speech_config_loading() -> None:
+    """Verifies that all Phase 2 speech configuration parameters load with accurate defaults."""
+    settings = load_settings()
+    assert settings.microphone.sample_rate == 16000
+    assert settings.microphone.channels == 1
+    assert settings.vad.sensitivity == 3
+    assert settings.vad.silence_timeout == 1.5
+    assert settings.whisper.model == "tiny"
+    assert settings.wakeword.phrase == "jarvis"
+    assert settings.piper.voice == "en_US-lessac-medium"
+
+
+def test_microphone_initialization_and_fallback() -> None:
+    """Ensures MicrophoneManager falls back to simulator gracefully when sounddevice is unavailable/mocked."""
+    mic = MicrophoneManager(device="test_mic", sample_rate=16000, channels=1, use_simulator=True)
+    assert mic.device_config == "test_mic"
+    assert mic.sample_rate == 16000
+    assert mic.channels == 1
+    assert mic.use_simulator is True
+
+    # Test device listing fallback
+    devices = mic.get_devices()
+    assert len(devices) > 0
+    assert "Simulated" in devices[0]["name"]
+
+
+@pytest.mark.asyncio
+async def test_microphone_simulator_stream() -> None:
+    """Tests starting, reading from, and stopping the simulated microphone stream."""
+    mic = MicrophoneManager(device="default", sample_rate=16000, channels=1, use_simulator=True)
+
+    mic.start_stream()
+    assert mic.is_streaming is True
+
+    # Read a chunk: should yield 30ms of silence (960 bytes for PCM 16-bit 16kHz)
+    chunk = await mic.read_chunk()
+    assert len(chunk) == 960
+    assert isinstance(chunk, bytes)
+
+    # Put a custom mock chunk in the simulator queue
+    mock_samples = np.ones(480, dtype=np.int16) * 100
+    await mic.simulator_queue.put(mock_samples.tobytes())
+
+    # Read chunk: should consume our custom mock chunk
+    chunk_custom = await mic.read_chunk()
+    assert len(chunk_custom) == 960
+    custom_samples = np.frombuffer(chunk_custom, dtype=np.int16)
+    assert custom_samples[0] == 100
+
+    mic.stop_stream()
+    assert mic.is_streaming is False
+
+
+def test_wakeword_detection() -> None:
+    """Tests WakeWordEngine keyword spotting, cooldown constraints, and accidental triggering."""
+    engine = WakeWordEngine(phrase="jarvis", cooldown=1.0, ignore_accidental_probability=0.2)
+    assert engine.phrase == "jarvis"
+
+    # Test standard detection
+    assert engine.detect_in_text("Hello Jarvis how are you?", confidence=0.9) is True
+
+    # Test cooldown check: immediately repeating should fail
+    assert engine.detect_in_text("Hello Jarvis", confidence=0.9) is False
+
+    # Test low confidence accidental suppression
+    # Create another engine with zero elapsed cooldown
+    engine_fresh = WakeWordEngine(phrase="jarvis", cooldown=1.0, ignore_accidental_probability=0.2)
+    assert engine_fresh.detect_in_text("Hi Jarvis", confidence=0.05) is False
+
+
+@pytest.mark.asyncio
+async def test_faster_whisper_fallback_and_transcribe() -> None:
+    """Ensures FasterWhisperRecognizer initializes and returns structured TranscriptionResult."""
+    # Force loading to run in simulator/fallback by passing model=None or mocking
+    with mock.patch("speech.recognizer.WHISPER_AVAILABLE", False):
+        recognizer = FasterWhisperRecognizer(model_name="tiny")
+        assert recognizer.model is None
+
+        # Try transcribing empty audio
+        empty_res = await recognizer.transcribe_audio(b"")
+        assert empty_res.text == ""
+
+        # Try transcribing simulated audio block
+        mock_pcm = np.zeros(16000 * 2, dtype=np.int16).tobytes() # 2 seconds of audio
+        res = await recognizer.transcribe_audio(mock_pcm)
+        assert res.text == "Hello Jarvis"
+        assert res.confidence == 0.95
+        assert res.duration == 2.0
+
+
+@pytest.mark.asyncio
+async def test_speech_manager_lifecycle() -> None:
+    """Tests starting, running, and stopping the SpeechManager lifecycle cleanly."""
+    settings = load_settings()
+    # Force simulator modes for tests
+    settings.microphone.use_simulator = True
+    settings.piper.use_simulator = True
+
+    manager = SpeechManager(settings=settings)
+    assert manager.microphone.use_simulator is True
+    assert manager.synthesizer.use_simulator is True
+
+    # Register mock responder callback
+    async def dummy_callback(prompt: str) -> str:
+        return f"Processed: {prompt}"
+
+    manager.register_speech_callback(dummy_callback)
+    assert manager._speech_callback == dummy_callback
+
+    # Start speech loop
+    await manager.start()
+    assert manager.is_running is True
+    assert manager.microphone.is_streaming is True
+
+    # Let the loop execute briefly
+    await asyncio.sleep(0.1)
+
+    # Stop loop
+    await manager.stop()
+    assert manager.is_running is False
+    assert manager.microphone.is_streaming is False

@@ -85,6 +85,34 @@ def config() -> None:
     speech_branch.add(f"TTS Provider: [yellow]{settings.speech.tts_provider}[/yellow]")
     speech_branch.add(f"Voice ID: [yellow]{settings.speech.voice_id}[/yellow]")
 
+    mic_branch = tree.add("[bold green]Microphone[/bold green]")
+    mic_branch.add(f"Device: [yellow]{settings.microphone.device}[/yellow]")
+    mic_branch.add(f"Sample Rate: [yellow]{settings.microphone.sample_rate}Hz[/yellow]")
+    mic_branch.add(f"Channels: [yellow]{settings.microphone.channels}[/yellow]")
+    mic_branch.add(f"Use Simulator: [yellow]{settings.microphone.use_simulator}[/yellow]")
+
+    vad_branch = tree.add("[bold green]Voice Activity Detection (VAD)[/bold green]")
+    vad_branch.add(f"Sensitivity: [yellow]{settings.vad.sensitivity}[/yellow]")
+    vad_branch.add(f"Silence Timeout: [yellow]{settings.vad.silence_timeout}s[/yellow]")
+    vad_branch.add(f"Min Speech Duration: [yellow]{settings.vad.min_speech_duration}s[/yellow]")
+
+    whisper_branch = tree.add("[bold green]Speech-to-Text (Whisper)[/bold green]")
+    whisper_branch.add(f"Model: [yellow]{settings.whisper.model}[/yellow]")
+    whisper_branch.add(f"Language: [yellow]{settings.whisper.language}[/yellow]")
+    whisper_branch.add(f"Compute Type: [yellow]{settings.whisper.compute_type}[/yellow]")
+    whisper_branch.add(f"Use GPU: [yellow]{settings.whisper.use_gpu}[/yellow]")
+
+    wakeword_branch = tree.add("[bold green]Wake Word[/bold green]")
+    wakeword_branch.add(f"Phrase: [yellow]{settings.wakeword.phrase}[/yellow]")
+    wakeword_branch.add(f"Cooldown: [yellow]{settings.wakeword.cooldown}s[/yellow]")
+    wakeword_branch.add(f"Accidental Prob Limit: [yellow]{settings.wakeword.ignore_accidental_probability}[/yellow]")
+
+    piper_branch = tree.add("[bold green]Text-to-Speech (Piper)[/bold green]")
+    piper_branch.add(f"Voice: [yellow]{settings.piper.voice}[/yellow]")
+    piper_branch.add(f"Speed Rate: [yellow]{settings.piper.speed}x[/yellow]")
+    piper_branch.add(f"Piper Path: [yellow]{settings.piper.piper_path}[/yellow]")
+    piper_branch.add(f"Use Simulator: [yellow]{settings.piper.use_simulator}[/yellow]")
+
     console.print(tree)
 
 

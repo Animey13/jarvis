@@ -56,12 +56,60 @@ class SpeechConfig:
 
 
 @dataclass
+class MicrophoneConfig:
+    """Microphone device settings."""
+    device: str = "default"
+    sample_rate: int = 16000
+    channels: int = 1
+    use_simulator: bool = False
+
+
+@dataclass
+class VADConfig:
+    """Voice Activity Detection settings."""
+    sensitivity: int = 3
+    silence_timeout: float = 1.5
+    min_speech_duration: float = 0.3
+
+
+@dataclass
+class WhisperConfig:
+    """Faster Whisper Speech-to-Text settings."""
+    model: str = "tiny"
+    language: str = "en"
+    compute_type: str = "float32"
+    use_gpu: bool = False
+
+
+@dataclass
+class WakeWordConfig:
+    """Wake Word settings."""
+    phrase: str = "jarvis"
+    cooldown: float = 2.0
+    ignore_accidental_probability: float = 0.1
+
+
+@dataclass
+class PiperConfig:
+    """Piper Text-to-Speech settings."""
+    voice: str = "en_US-lessac-medium"
+    speed: float = 1.0
+    piper_path: str = "piper"
+    use_simulator: bool = False
+
+
+@dataclass
 class Settings:
     """Global Settings registry for JARVIS."""
     app: AppConfig = field(default_factory=AppConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     speech: SpeechConfig = field(default_factory=SpeechConfig)
+    microphone: MicrophoneConfig = field(default_factory=MicrophoneConfig)
+    vad: VADConfig = field(default_factory=VADConfig)
+    whisper: WhisperConfig = field(default_factory=WhisperConfig)
+    wakeword: WakeWordConfig = field(default_factory=WakeWordConfig)
+    piper: PiperConfig = field(default_factory=PiperConfig)
 
     def get_log_file_path(self) -> Path:
         """
@@ -77,7 +125,6 @@ class Settings:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            # Fallback to current working directory if logs directory cannot be created
             fallback_path = BASE_DIR / "jarvis.log"
             print(f"Warning: Failed to create directories for {path}: {e}. Falling back to {fallback_path}")
             return fallback_path
@@ -120,8 +167,13 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     logging_data: Dict[str, Any] = raw_config.get("logging", {})
     llm_data: Dict[str, Any] = raw_config.get("llm", {})
     speech_data: Dict[str, Any] = raw_config.get("speech", {})
+    mic_data: Dict[str, Any] = raw_config.get("microphone", {})
+    vad_data: Dict[str, Any] = raw_config.get("vad", {})
+    whisper_data: Dict[str, Any] = raw_config.get("whisper", {})
+    wakeword_data: Dict[str, Any] = raw_config.get("wakeword", {})
+    piper_data: Dict[str, Any] = raw_config.get("piper", {})
 
-    # 5. Environment variable overrides (Upper-case and dot-separated or underscore representation)
+    # 5. Environment variable overrides (Upper-case representation)
 
     # App overrides
     app_env = os.getenv("APP_ENV", app_data.get("env", "development"))
@@ -150,6 +202,69 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     speech_tts = os.getenv("SPEECH_TTS_PROVIDER", speech_data.get("tts_provider", "local"))
     speech_voice = os.getenv("SPEECH_VOICE_ID", speech_data.get("voice_id", "en-US-Wavenet-D"))
 
+    # Microphone overrides
+    mic_device = os.getenv("MICROPHONE_DEVICE", mic_data.get("device", "default"))
+    mic_sr_str = os.getenv("MICROPHONE_SAMPLE_RATE", str(mic_data.get("sample_rate", 16000)))
+    try:
+        mic_sr = int(mic_sr_str)
+    except ValueError:
+        mic_sr = 16000
+    mic_channels_str = os.getenv("MICROPHONE_CHANNELS", str(mic_data.get("channels", 1)))
+    try:
+        mic_channels = int(mic_channels_str)
+    except ValueError:
+        mic_channels = 1
+    mic_sim_str = os.getenv("MICROPHONE_USE_SIMULATOR", str(mic_data.get("use_simulator", "false")))
+    mic_sim = mic_sim_str.lower() in ("true", "1", "yes")
+
+    # VAD overrides
+    vad_sens_str = os.getenv("VAD_SENSITIVITY", str(vad_data.get("sensitivity", 3)))
+    try:
+        vad_sens = int(vad_sens_str)
+    except ValueError:
+        vad_sens = 3
+    vad_timeout_str = os.getenv("VAD_SILENCE_TIMEOUT", str(vad_data.get("silence_timeout", 1.5)))
+    try:
+        vad_timeout = float(vad_timeout_str)
+    except ValueError:
+        vad_timeout = 1.5
+    vad_min_speech_str = os.getenv("VAD_MIN_SPEECH_DURATION", str(vad_data.get("min_speech_duration", 0.3)))
+    try:
+        vad_min_speech = float(vad_min_speech_str)
+    except ValueError:
+        vad_min_speech = 0.3
+
+    # Whisper overrides
+    whisper_model = os.getenv("WHISPER_MODEL", whisper_data.get("model", "tiny"))
+    whisper_lang = os.getenv("WHISPER_LANGUAGE", whisper_data.get("language", "en"))
+    whisper_comp = os.getenv("WHISPER_COMPUTE_TYPE", whisper_data.get("compute_type", "float32"))
+    whisper_gpu_str = os.getenv("WHISPER_USE_GPU", str(whisper_data.get("use_gpu", "false")))
+    whisper_gpu = whisper_gpu_str.lower() in ("true", "1", "yes")
+
+    # Wake Word overrides
+    wakeword_phrase = os.getenv("WAKEWORD_PHRASE", wakeword_data.get("phrase", "jarvis"))
+    wakeword_cooldown_str = os.getenv("WAKEWORD_COOLDOWN", str(wakeword_data.get("cooldown", 2.0)))
+    try:
+        wakeword_cooldown = float(wakeword_cooldown_str)
+    except ValueError:
+        wakeword_cooldown = 2.0
+    wakeword_acc_str = os.getenv("WAKEWORD_IGNORE_ACCIDENTAL_PROBABILITY", str(wakeword_data.get("ignore_accidental_probability", 0.1)))
+    try:
+        wakeword_acc = float(wakeword_acc_str)
+    except ValueError:
+        wakeword_acc = 0.1
+
+    # Piper overrides
+    piper_voice = os.getenv("PIPER_VOICE", piper_data.get("voice", "en_US-lessac-medium"))
+    piper_speed_str = os.getenv("PIPER_SPEED", str(piper_data.get("speed", 1.0)))
+    try:
+        piper_speed = float(piper_speed_str)
+    except ValueError:
+        piper_speed = 1.0
+    piper_path = os.getenv("PIPER_PATH", piper_data.get("piper_path", "piper"))
+    piper_sim_str = os.getenv("PIPER_USE_SIMULATOR", str(piper_data.get("use_simulator", "false")))
+    piper_sim = piper_sim_str.lower() in ("true", "1", "yes")
+
     # 6. Instantiate settings object
     return Settings(
         app=AppConfig(
@@ -172,6 +287,34 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
             input_device=speech_input,
             tts_provider=speech_tts,
             voice_id=speech_voice
+        ),
+        microphone=MicrophoneConfig(
+            device=mic_device,
+            sample_rate=mic_sr,
+            channels=mic_channels,
+            use_simulator=mic_sim
+        ),
+        vad=VADConfig(
+            sensitivity=vad_sens,
+            silence_timeout=vad_timeout,
+            min_speech_duration=vad_min_speech
+        ),
+        whisper=WhisperConfig(
+            model=whisper_model,
+            language=whisper_lang,
+            compute_type=whisper_comp,
+            use_gpu=whisper_gpu
+        ),
+        wakeword=WakeWordConfig(
+            phrase=wakeword_phrase,
+            cooldown=wakeword_cooldown,
+            ignore_accidental_probability=wakeword_acc
+        ),
+        piper=PiperConfig(
+            voice=piper_voice,
+            speed=piper_speed,
+            piper_path=piper_path,
+            use_simulator=piper_sim
         )
     )
 

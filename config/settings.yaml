@@ -20,3 +20,31 @@ speech:
   input_device: "default"
   tts_provider: "local"
   voice_id: "en-US-Wavenet-D"
+
+microphone:
+  device: "default"
+  sample_rate: 16000
+  channels: 1
+  use_simulator: false
+
+vad:
+  sensitivity: 3
+  silence_timeout: 1.5
+  min_speech_duration: 0.3
+
+whisper:
+  model: "tiny"
+  language: "en"
+  compute_type: "float32"
+  use_gpu: false
+
+wakeword:
+  phrase: "jarvis"
+  cooldown: 2.0
+  ignore_accidental_probability: 0.1
+
+piper:
+  voice: "en_US-lessac-medium"
+  speed: 1.0
+  piper_path: "piper"
+  use_simulator: false
