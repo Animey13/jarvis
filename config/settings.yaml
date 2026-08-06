@@ -1,0 +1,22 @@
+# JARVIS Configuration Settings
+
+app:
+  name: "JARVIS"
+  env: "development"
+  debug: true
+
+logging:
+  level: "INFO"
+  file_path: "logs/jarvis.log"
+  console_output: true
+
+llm:
+  provider: "ollama"
+  model: "llama3:8b"
+  api_base: "http://localhost:11434"
+  timeout: 30.0
+
+speech:
+  input_device: "default"
+  tts_provider: "local"
+  voice_id: "en-US-Wavenet-D"
