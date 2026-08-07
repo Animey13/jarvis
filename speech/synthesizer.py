@@ -74,7 +74,11 @@ class PiperSynthesizer(SpeechSynthesizer):
 
     def _start_queue_worker(self) -> None:
         """Starts the background coroutine that monitors and plays queued speech items."""
-        self._worker_task = asyncio.create_task(self._queue_worker())
+        try:
+            loop = asyncio.get_running_loop()
+            self._worker_task = loop.create_task(self._queue_worker())
+        except RuntimeError:
+            logger.debug("No running event loop. Background speech worker deferred.")
 
     async def _queue_worker(self) -> None:
         """Background loop consuming texts from the queue sequentially."""
@@ -144,6 +148,8 @@ class PiperSynthesizer(SpeechSynthesizer):
         """
         if not text.strip():
             return
+        if self._worker_task is None or self._worker_task.done():
+            self._start_queue_worker()
         await self._speech_queue.put(text)
         logger.debug("Text queued for synthesis: '%s'", text)
 

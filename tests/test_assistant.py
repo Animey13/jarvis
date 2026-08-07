@@ -12,6 +12,8 @@ from config.config import load_settings
 def test_assistant_initialization() -> None:
     """Verifies assistant properties are initialized correctly from configuration."""
     settings = load_settings()
+    settings.microphone.use_simulator = True
+    settings.piper.use_simulator = True
     assistant = JarvisAssistant(settings=settings)
     assert assistant.settings == settings
     assert not assistant.is_running
@@ -20,6 +22,8 @@ def test_assistant_initialization() -> None:
 def test_display_banner() -> None:
     """Ensures display_banner can run without causing exceptions."""
     settings = load_settings()
+    settings.microphone.use_simulator = True
+    settings.piper.use_simulator = True
     assistant = JarvisAssistant(settings=settings)
 
     with mock.patch.object(assistant.console, "print") as mock_print:
@@ -31,6 +35,8 @@ def test_display_banner() -> None:
 async def test_assistant_graceful_stop() -> None:
     """Verifies that calling stop() is graceful and works as expected."""
     settings = load_settings()
+    settings.microphone.use_simulator = True
+    settings.piper.use_simulator = True
     assistant = JarvisAssistant(settings=settings)
 
     assistant.is_running = True
@@ -44,6 +50,8 @@ async def test_assistant_graceful_stop() -> None:
 async def test_run_loop_with_immediate_exit() -> None:
     """Simulates the interactive loop receiving 'exit' and exiting gracefully."""
     settings = load_settings()
+    settings.microphone.use_simulator = True
+    settings.piper.use_simulator = True
     assistant = JarvisAssistant(settings=settings)
 
     assistant.is_running = True

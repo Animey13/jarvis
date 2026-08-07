@@ -2,7 +2,7 @@
 JARVIS Microphone Manager Module.
 
 Implements the AudioInput interface to manage physical or simulated microphone capture.
-Supports automatic fallback to a simulated input queue when PortAudio is unavailable.
+Provides automatic device negotiation, sample rate resampling, and robust fallback logic.
 """
 
 import asyncio
@@ -48,8 +48,34 @@ class MicrophoneManager(AudioInput):
         self.device_config: str = device
         self.sample_rate: int = sample_rate
         self.channels: int = channels
-        self.use_simulator: bool = use_simulator or not SOUNDDEVICE_AVAILABLE
         self.is_streaming: bool = False
+
+        # Determine if sounddevice is available and has recording devices
+        self.has_physical_devices = False
+        self._physical_device_idx: Optional[int] = None
+        self._device_name: str = "Simulated Virtual Microphone"
+        self._actual_sample_rate: int = sample_rate
+
+        if SOUNDDEVICE_AVAILABLE:
+            try:
+                devices = sd.query_devices()
+                input_devices = [d for d in devices if d.get("max_input_channels", 0) > 0]
+                if len(input_devices) > 0:
+                    self.has_physical_devices = True
+            except Exception as e:
+                logger.warning("Failed to query sounddevice devices: %s", e)
+                self.has_physical_devices = False
+
+        # Simulator Gating Rules:
+        # Simulator should only activate if:
+        # - no recording device exists
+        # - user explicitly enables simulator
+        # - sounddevice initialization fails entirely
+        self.use_simulator: bool = use_simulator or not self.has_physical_devices
+
+        # Auto select the input device and default parameters
+        if not self.use_simulator:
+            self._select_input_device()
 
         # Asynchronous Queue for captured audio frames
         self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
@@ -59,13 +85,83 @@ class MicrophoneManager(AudioInput):
         # Simulator attributes
         self.simulator_queue: asyncio.Queue[bytes] = asyncio.Queue()
 
-        # Cached device list
-        self._devices_cache: List[Dict[str, Any]] = []
+        # Startup logging as requested:
+        # Input Device:
+        # Sample Rate:
+        # Channels:
+        # Backend:
+        # Simulation:
+        backend_str = "PortAudio / sounddevice" if not self.use_simulator else "Simulated"
+        simulation_str = "Enabled" if self.use_simulator else "Disabled"
+        logger.info("========================================")
+        logger.info("JARVIS Microphone Subsystem initialized:")
+        logger.info("  Input Device: %s", self._device_name)
+        logger.info("  Sample Rate:  %dHz (Actual: %dHz)", self.sample_rate, self._actual_sample_rate)
+        logger.info("  Channels:     %d", self.channels)
+        logger.info("  Backend:      %s", backend_str)
+        logger.info("  Simulation:   %s", simulation_str)
+        logger.info("========================================")
 
-        logger.info(
-            "MicrophoneManager initialized (Device: %s, SR: %d, Channels: %d, Simulator Mode: %s)",
-            self.device_config, self.sample_rate, self.channels, self.use_simulator
-        )
+    def _select_input_device(self) -> None:
+        """
+        Automatically selects the default or first available physical input device.
+        """
+        try:
+            devices = sd.query_devices()
+
+            # Resolve the default input device
+            default_input_idx = sd.default.device[0]
+
+            # Find all devices with input channels
+            input_devices = [d for idx, d in enumerate(devices) if d.get("max_input_channels", 0) > 0]
+
+            if not input_devices:
+                self.use_simulator = True
+                self._device_name = "Simulated Virtual Microphone"
+                return
+
+            selected_idx: Optional[int] = None
+
+            # Scenario A: Device is explicit index
+            try:
+                idx = int(self.device_config)
+                if idx < len(devices) and devices[idx].get("max_input_channels", 0) > 0:
+                    selected_idx = idx
+            except ValueError:
+                pass
+
+            # Scenario B: Device is string name search
+            if selected_idx is None and self.device_config != "default":
+                for idx, dev in enumerate(devices):
+                    if dev.get("max_input_channels", 0) > 0 and self.device_config.lower() in dev.get("name", "").lower():
+                        selected_idx = idx
+                        break
+
+            # Scenario C: Use Default recording device index
+            if selected_idx is None and default_input_idx is not None and default_input_idx >= 0:
+                selected_idx = default_input_idx
+
+            # Scenario D: Fallback to first available input device
+            if selected_idx is None:
+                for idx, dev in enumerate(devices):
+                    if dev.get("max_input_channels", 0) > 0:
+                        selected_idx = idx
+                        break
+
+            if selected_idx is not None:
+                self._physical_device_idx = selected_idx
+                dev_info = devices[selected_idx]
+                self._device_name = dev_info.get("name", f"Device {selected_idx}")
+                self._actual_sample_rate = int(dev_info.get("default_samplerate", self.sample_rate))
+                logger.info("Selected input device '%s' (Index: %d) as recording source.", self._device_name, selected_idx)
+            else:
+                self.use_simulator = True
+                self._device_name = "Simulated Virtual Microphone"
+
+        except Exception as e:
+            logger.error("Error selecting input device: %s. Falling back to simulator.", e)
+            self.use_simulator = True
+            self._device_name = "Simulated Virtual Microphone"
 
     def get_devices(self) -> List[Dict[str, Any]]:
         """
@@ -76,9 +172,6 @@ class MicrophoneManager(AudioInput):
         """
         if self.use_simulator or not SOUNDDEVICE_AVAILABLE:
             return [{"name": "Simulated Virtual Microphone", "index": 0, "max_input_channels": 1}]
-
-        if self._devices_cache:
-            return self._devices_cache
 
         try:
             device_list: List[Dict[str, Any]] = []
@@ -91,32 +184,10 @@ class MicrophoneManager(AudioInput):
                         "max_input_channels": dev.get("max_input_channels", 1),
                         "default_samplerate": dev.get("default_samplerate", 16000.0)
                     })
-            self._devices_cache = device_list
             return device_list
         except Exception as e:
             logger.error("Failed to query sound devices: %s. Falling back to simulation lists.", e)
             return [{"name": "Simulated Virtual Microphone (Query Fallback)", "index": 0, "max_input_channels": 1}]
-
-    def _get_device_index(self) -> Optional[Any]:
-        """
-        Resolves the configured device name to a physical device index.
-        """
-        if self.device_config == "default":
-            return None
-
-        try:
-            # Check if device configuration is specified as an integer index
-            return int(self.device_config)
-        except ValueError:
-            pass
-
-        devices = self.get_devices()
-        for dev in devices:
-            if self.device_config.lower() in dev["name"].lower():
-                return dev["index"]
-
-        logger.warning("Configured device '%s' not found. Falling back to default device.", self.device_config)
-        return None
 
     def start_stream(self) -> None:
         """
@@ -139,36 +210,69 @@ class MicrophoneManager(AudioInput):
             return
 
         # Initialize physical sounddevice stream
-        device_idx = self._get_device_index()
-        logger.info("Opening physical input stream on device: %s", device_idx if device_idx is not None else "Default")
+        logger.info("Opening physical input stream on device: %s (Index: %s)", self._device_name, self._physical_device_idx)
+
+        # Helper to downsample audio arrays to target 16000Hz if device defaults differ
+        def resample_audio(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
+            if src_rate == dst_rate:
+                return samples
+            num_samples_dst = int(len(samples) * (dst_rate / src_rate))
+            return np.interp(
+                np.linspace(0, len(samples), num_samples_dst, endpoint=False),
+                np.arange(len(samples)),
+                samples
+            ).astype(np.int16)
 
         def audio_callback(indata: np.ndarray, frames: int, time_info: Any, status: Any) -> None:
             """Callback from PortAudio running on separate OS thread."""
             if status:
                 logger.warning("PortAudio status warning: %s", status)
 
-            # Convert NumPy float32 or int16 data to raw 16-bit PCM bytes
-            raw_bytes = indata.tobytes()
+            # Convert captured buffer to int16 samples and resample if necessary
+            samples = indata[:, 0]  # Take channel 0
+
+            if self._actual_sample_rate != self.sample_rate:
+                samples = resample_audio(samples, self._actual_sample_rate, self.sample_rate)
+
+            # Ensure we deliver 30ms-equivalent blocks if possible, or directly deliver
+            raw_bytes = samples.tobytes()
             if self._loop and self.is_streaming:
                 self._loop.call_soon_threadsafe(self._audio_queue.put_nowait, raw_bytes)
 
-        try:
-            self._stream = sd.InputStream(
-                device=device_idx,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype="int16",
-                callback=audio_callback,
-                blocksize=480 # 30ms frames for 16000Hz (16000 * 0.03 = 480 samples)
-            )
-            self._stream.start()
-            logger.info("Microphone input stream started successfully.")
-        except Exception as e:
-            logger.error("Failed to open physical audio stream: %s. Switching to virtual simulation.", e)
-            self.use_simulator = True
-            # Re-call stream start in simulation mode
-            self.is_streaming = False
-            self.start_stream()
+        # Device parameter negotiation falling back to defaults if configured target fails
+        negotiation_rates = [self.sample_rate, self._actual_sample_rate, 44100, 48000, 16000]
+        opened_successfully = False
+
+        for rate in negotiation_rates:
+            try:
+                # Calculate appropriate blocksize for 30ms at selected sample rate
+                # 30ms at Rate = Rate * 0.03
+                block_size = int(rate * 0.03)
+                logger.info("Attempting to open input stream (Rate: %dHz, Device Index: %s, Block size: %d)", rate, self._physical_device_idx, block_size)
+
+                self._stream = sd.InputStream(
+                    device=self._physical_device_idx,
+                    samplerate=rate,
+                    channels=self.channels,
+                    dtype="int16",
+                    callback=audio_callback,
+                    blocksize=block_size
+                )
+                self._stream.start()
+                self._actual_sample_rate = rate
+                opened_successfully = True
+                logger.info("Microphone input stream started successfully at %dHz.", rate)
+                break
+            except Exception as e:
+                logger.warning("Failed to open physical stream with sample rate %dHz: %s", rate, e)
+                continue
+
+        if not opened_successfully:
+            # If we couldn't open any stream even though we have devices, raise RuntimeError
+            # (Simulator should only activate if sounddevice initialization fails entirely,
+            # meaning we can't load the binary or find devices. Since devices DO exist,
+            # we should raise an initialization error rather than silently masking it!)
+            raise RuntimeError(f"Failed to initialize physical microphone input stream on device {self._device_name}.")
 
     def stop_stream(self) -> None:
         """
@@ -228,7 +332,6 @@ class MicrophoneManager(AudioInput):
         try:
             self.stop_stream()
             await_loop = asyncio.get_event_loop()
-            # Give OS time to settle, then restart
             await_loop.call_later(0.1, self.start_stream)
         except Exception as e:
             logger.error("Graceful recovery failed: %s. Falling back to simulator mode.", e)

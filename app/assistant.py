@@ -1,8 +1,8 @@
 """
 JARVIS Core Assistant Module.
 
-This module defines the main JarvisAssistant class which manages the application
-lifecycle, handles graceful shutdown, and executes the interactive CLI shell loop.
+Coordinates the main application lifecycle and integrates the SpeechManager
+to implement a local offline speech interaction loop (Voice Test).
 """
 
 import asyncio
@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from config.config import Settings
+from speech.manager import SpeechManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class JarvisAssistant:
 
     def __init__(self, settings: Settings) -> None:
         """
-        Initializes the assistant with the provided settings.
+        Initializes the assistant with the provided settings and speech manager.
 
         Args:
             settings: Loaded configuration settings.
@@ -34,6 +35,20 @@ class JarvisAssistant:
         self.console: Console = Console()
         self.is_running: bool = False
         self._shutdown_event: Optional[asyncio.Event] = None
+
+        # Initialize the Speech Manager
+        logger.info("Initializing Jarvis Core Speech subsystem...")
+        self.speech_manager: SpeechManager = SpeechManager(settings=settings)
+
+        # Register simple Voice Test callback: Listen -> Transcribe -> Print -> Speak
+        async def voice_test_callback(prompt: str) -> str:
+            self.console.print(f"\n[bold green]🎙️  [Voice Test] Transcribed:[/bold green] [italic yellow]'{prompt}'[/italic yellow]")
+            # Speak the transcription back directly without LLM
+            response = f"You said {prompt}"
+            self.console.print(f"[bold blue]🎙️  [Voice Test] Speaking back:[/bold blue] [italic white]\"{response}\"[/italic white]\n")
+            return response
+
+        self.speech_manager.register_speech_callback(voice_test_callback)
 
     def display_banner(self) -> None:
         """Displays a beautiful, production-grade ASCII banner for JARVIS."""
@@ -49,7 +64,8 @@ class JarvisAssistant:
         self.console.print(f"[bold green] Jarvis Assistant (v0.1.0) [/bold green] - [italic yellow]Platform: Ubuntu-Compatible[/italic yellow]")
         self.console.print(f" Environment: [bold magenta]{self.settings.app.env}[/bold magenta] | Debug: [bold]{self.settings.app.debug}[/bold]")
         self.console.print("[dim]-------------------------------------------------------------[/dim]")
-        self.console.print(" Type [bold red]exit[/bold red] or [bold red]quit[/bold red] to stop the assistant.")
+        self.console.print(" Voice Activation: Speak [bold yellow]'Jarvis'[/bold yellow] followed by your command.")
+        self.console.print(" Console Interface: Type [bold red]exit[/bold red] or [bold red]quit[/bold red] to stop.")
         self.console.print("[dim]-------------------------------------------------------------[/dim]\n")
 
     def _setup_signal_handlers(self) -> None:
@@ -66,7 +82,6 @@ class JarvisAssistant:
             try:
                 loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
             except NotImplementedError:
-                # Fallback for environments where loop.add_signal_handler is not supported
                 pass
 
     async def start(self) -> None:
@@ -87,6 +102,13 @@ class JarvisAssistant:
         # Setup OS Signal handlers
         self._setup_signal_handlers()
 
+        # Start the background Speech Manager orchestration
+        try:
+            await self.speech_manager.start()
+        except Exception as e:
+            logger.error("Failed to start SpeechManager stream: %s. Continuing with terminal-only.", e)
+            self.console.print(f"[bold yellow]Warning: Speech Layer failed to start ({e}). Running in terminal-only mode.[/bold yellow]")
+
         # Execute main loop
         try:
             await self._run_loop()
@@ -105,7 +127,6 @@ class JarvisAssistant:
 
         while not self._shutdown_event.is_set():
             try:
-                # Wrap input in run_in_executor to keep the async loop active for timers and signal handlers
                 user_input = await loop.run_in_executor(
                     None,
                     lambda: Prompt.ask("[bold green]jarvis>[/bold green]")
@@ -120,8 +141,8 @@ class JarvisAssistant:
                 if not clean_input:
                     continue
 
-                logger.debug("Received input: %s", user_input)
-                self.console.print(f"[bold blue]JARVIS Foundation Response:[/bold blue] Base is ready! Command received: [italic]'{user_input}'[/italic]. (AI Features will be integrated in Phase 2.)")
+                logger.debug("Received console input: %s", user_input)
+                self.console.print(f"[bold blue]JARVIS Response:[/bold blue] Running offline voice-test! Speak [bold yellow]'Jarvis'[/bold yellow] to talk. Command received: '{user_input}'")
 
             except (KeyboardInterrupt, EOFError):
                 logger.info("Console interrupted (EOF/KeyboardInterrupt).")
@@ -141,7 +162,12 @@ class JarvisAssistant:
         logger.info("Stopping JARVIS and cleaning up resources...")
         self.is_running = False
 
-        # In future phases: Close databases, disconnect voice channels, save state here.
+        # Stop Speech Manager
+        try:
+            await self.speech_manager.stop()
+        except Exception as e:
+            logger.error("Error stopping SpeechManager: %s", e)
+
         await asyncio.sleep(0.1) # Simulate teardown overhead
 
         self.console.print("[bold cyan]JARVIS: Offline. Goodbye.[/bold cyan]")
