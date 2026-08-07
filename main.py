@@ -129,5 +129,102 @@ def version() -> None:
     console.print("[dim]A production-grade, offline-first local AI companion platform.[/dim]")
 
 
+@app.command(name="test-tts")
+def test_tts() -> None:
+    """
+    Speaks a test sentence using Piper offline TTS.
+    Does not require a microphone.
+    """
+    configure_logging(
+        log_level=settings.logging.level,
+        log_file=settings.get_log_file_path(),
+        console_output=settings.logging.console_output
+    )
+
+    print("[*] Initializing Piper TTS...")
+    from speech.synthesizer import PiperSynthesizer
+    synthesizer = PiperSynthesizer(
+        voice=settings.piper.voice,
+        speed=settings.piper.speed,
+        piper_path=settings.piper.piper_path,
+        use_simulator=settings.piper.use_simulator
+    )
+
+    test_phrase = "Hello. This is JARVIS speaking."
+    print(f"[*] Speaking: '{test_phrase}'")
+
+    try:
+        asyncio.run(synthesizer.speak(test_phrase))
+        print("[+] TTS test complete.")
+    except Exception as e:
+        print(f"[-] TTS test failed: {e}")
+        sys.exit(1)
+
+
+@app.command(name="test-mic")
+def test_mic() -> None:
+    """
+    Records 5 seconds of audio from the microphone and transcribes it using Faster Whisper.
+    """
+    configure_logging(
+        log_level=settings.logging.level,
+        log_file=settings.get_log_file_path(),
+        console_output=settings.logging.console_output
+    )
+
+    print("[*] Initializing Microphone and Speech Recognizer...")
+    from speech.microphone import MicrophoneManager
+    from speech.recognizer import FasterWhisperRecognizer
+
+    microphone = MicrophoneManager(
+        device=settings.microphone.device,
+        sample_rate=settings.microphone.sample_rate,
+        channels=settings.microphone.channels,
+        use_simulator=settings.microphone.use_simulator
+    )
+
+    recognizer = FasterWhisperRecognizer(
+        model_name=settings.whisper.model,
+        language=settings.whisper.language,
+        compute_type=settings.whisper.compute_type,
+        use_gpu=settings.whisper.use_gpu,
+        vad_sensitivity=settings.vad.sensitivity,
+        silence_timeout=settings.vad.silence_timeout,
+        min_speech_duration=settings.vad.min_speech_duration,
+        device_name=settings.microphone.device
+    )
+
+    async def record_and_transcribe():
+        print("[*] Starting audio stream...")
+        microphone.start_stream()
+        print("[*] Recording 5 seconds... Speak now!")
+
+        audio_buffer = []
+        # 5 seconds is 5 / 0.03 = ~167 chunks
+        for i in range(167):
+            chunk = await microphone.read_chunk()
+            audio_buffer.append(chunk)
+
+        print("[*] Recording finished. Stopping stream...")
+        microphone.stop_stream()
+
+        print("[*] Transcribing audio...")
+        full_audio = b"".join(audio_buffer)
+        result = await recognizer.transcribe_audio(full_audio)
+
+        print("\n========================================")
+        print(f"Transcription: '{result.text}'")
+        print(f"Confidence: {result.confidence:.2f}")
+        print(f"Language: {result.language}")
+        print(f"Duration: {result.duration:.2f}s")
+        print("========================================\n")
+
+    try:
+        asyncio.run(record_and_transcribe())
+    except Exception as e:
+        print(f"[-] Mic test failed: {e}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     app()

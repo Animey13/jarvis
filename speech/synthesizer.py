@@ -41,7 +41,6 @@ class PiperSynthesizer(SpeechSynthesizer):
             piper_path: Path to the piper executable on the system.
             use_simulator: Force mock speech (subtitles) without invoking system audio players.
         """
-        # Convert speed multiplier to a voice rate (WPM fallback from Phase 1 interface)
         rate = int(150 * speed)
         super().__init__(voice_id=voice, rate=rate)
 
@@ -50,6 +49,11 @@ class PiperSynthesizer(SpeechSynthesizer):
         self.piper_path: str = piper_path
         self.use_simulator: bool = use_simulator
         self.console: Console = Console()
+
+        # Check if the piper executable exists at /usr/bin/piper
+        if Path("/usr/bin/piper").exists():
+            self.piper_path = "/usr/bin/piper"
+            logger.info("Auto-resolved Piper path to standard location: %s", self.piper_path)
 
         # Queuing mechanism for multiple responses
         self._speech_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -104,7 +108,6 @@ class PiperSynthesizer(SpeechSynthesizer):
         """
         logger.info("Speech interruption requested. Stopping playback and clearing queues.")
 
-        # Clear the queue
         while not self._speech_queue.empty():
             try:
                 self._speech_queue.get_nowait()
@@ -112,7 +115,6 @@ class PiperSynthesizer(SpeechSynthesizer):
             except asyncio.QueueEmpty:
                 break
 
-        # Terminate active audio process
         if self._current_process:
             try:
                 logger.info("Terminating active playback process PID %d.", self._current_process.pid)
@@ -153,33 +155,85 @@ class PiperSynthesizer(SpeechSynthesizer):
         await self._speech_queue.put(text)
         logger.debug("Text queued for synthesis: '%s'", text)
 
+    def _ensure_voice_model_exists(self) -> str:
+        """
+        Ensures that the Piper voice model ONNX file and its JSON configuration
+        exist locally. Downloads them if missing.
+
+        Returns:
+            str: Absolute path to the ONNX voice model.
+        """
+        from config.config import BASE_DIR
+        assets_dir = BASE_DIR / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+
+        if Path(self.voice_model).exists():
+            return str(Path(self.voice_model).resolve())
+
+        onnx_path = assets_dir / f"{self.voice_model}.onnx"
+        json_path = assets_dir / f"{self.voice_model}.onnx.json"
+
+        if not onnx_path.exists() or not json_path.exists():
+            logger.info("Voice model '%s' not found locally at %s. Launching automatic downloader...", self.voice_model, onnx_path)
+            import urllib.request
+
+            # Parse model string (e.g. en_US-lessac-medium)
+            parts = self.voice_model.split("-")
+            if len(parts) >= 2:
+                lang_code = parts[0].split("_")[0] # en
+                country_code = parts[0] # en_US
+                voice_name = parts[1] # lessac
+                quality = parts[2] if len(parts) > 2 else "medium"
+
+                base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/{lang_code}/{country_code}/{voice_name}/{quality}"
+                onnx_url = f"{base_url}/{self.voice_model}.onnx"
+                json_url = f"{base_url}/{self.voice_model}.onnx.json"
+
+                try:
+                    logger.info("Downloading ONNX voice model from %s...", onnx_url)
+                    urllib.request.urlretrieve(onnx_url, onnx_path)
+                    logger.info("Downloading JSON config from %s...", json_url)
+                    urllib.request.urlretrieve(json_url, json_path)
+                    logger.info("Successfully downloaded voice model files to assets/.")
+                except Exception as e:
+                    logger.error("Failed to automatically download voice model: %s. Using assets fallback path.", e)
+            else:
+                logger.warning("Voice model name format not recognized. Fallback directly.")
+
+        return str(onnx_path.resolve())
+
     async def _synthesize_and_play(self, text: str) -> None:
         """
         Performs the actual synthesis of text into speech, with subprocess rendering
         and platform audio player fallback.
         """
-        logger.info("TTS Synthesis started: '%s'", text)
+        # Requirements: Log every stage
+        # - text received
+        # - Piper executable
+        # - voice model path
+        # - synthesis started
+        # - synthesis finished
+        # - WAV output path
+        # - playback backend selected
+        # - playback completed
+        logger.info("TTS [text received]: '%s'", text)
+        logger.info("TTS [Piper executable]: '%s'", self.piper_path)
 
-        # Ensure correct temporary output path
+        # Ensure model is present on disk or downloaded
+        model_path = self._ensure_voice_model_exists()
+        logger.info("TTS [voice model path]: '%s'", model_path)
+
         wav_path = self._temp_dir / f"tts_{hash(text) & 0xFFFFFFFF}.wav"
 
         # 1. Simulator fallback: display subtitles on console
         if self.use_simulator:
+            logger.info("TTS [playback backend selected]: 'Simulated subtitles'")
             await self._simulate_speech(text)
+            logger.info("TTS [playback completed].")
             return
 
         # 2. Piper rendering to wav file
-        # Command form: echo "text" | piper --model voice.onnx --output_file file.wav --length_scale (1/speed)
         length_scale = 1.0 / self.speed if self.speed > 0 else 1.0
-
-        # Look for the voice model. If it's a relative path or name, we look in 'assets/' or 'config/'
-        model_path = self.voice_model
-        if not Path(model_path).exists():
-            # Check standard path
-            from config.config import BASE_DIR
-            assets_model = BASE_DIR / "assets" / f"{self.voice_model}.onnx"
-            if assets_model.exists():
-                model_path = str(assets_model)
 
         piper_cmd = [
             self.piper_path,
@@ -188,42 +242,56 @@ class PiperSynthesizer(SpeechSynthesizer):
             "--length_scale", f"{length_scale:.2f}"
         ]
 
-        logger.debug("Running Piper command: %s", " ".join(piper_cmd))
+        logger.info("TTS [synthesis started]. Command: %s", " ".join(piper_cmd))
         loop = asyncio.get_running_loop()
 
         try:
-            # Run Piper in background process to keep thread non-blocking
+            # We append a newline \n to ensure the CLI processes the input completely
+            text_input = text + "\n"
+
             piper_proc = await asyncio.create_subprocess_exec(
                 *piper_cmd,
                 stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
 
-            stdout, stderr = await piper_proc.communicate(input=text.encode("utf-8"))
+            stdout, stderr = await piper_proc.communicate(input=text_input.encode("utf-8"))
 
             if piper_proc.returncode != 0:
-                logger.error("Piper synthesis failed with exit code %d: %s", piper_proc.returncode, stderr.decode().strip())
+                # Requirement 7: print the exact stderr/stdout instead of silently continuing
+                error_msg = (
+                    f"CRITICAL: Piper synthesis failed with exit code {piper_proc.returncode}.\n"
+                    f"STDOUT:\n{stdout.decode().strip()}\n"
+                    f"STDERR:\n{stderr.decode().strip()}"
+                )
+                print(error_msg)
+                logger.error(error_msg)
                 raise RuntimeError("Piper binary error")
 
+            logger.info("TTS [synthesis finished].")
+            logger.info("TTS [WAV output path]: '%s'", wav_path)
+
         except Exception as e:
-            logger.warning("Piper is not executable or voice model missing: %s. Falling back to simulator mode.", e)
+            logger.warning("Piper invocation failed: %s. Falling back to simulator subtitles.", e)
             self.use_simulator = True
+            logger.info("TTS [playback backend selected]: 'Simulated subtitles'")
             await self._simulate_speech(text)
+            logger.info("TTS [playback completed].")
             return
 
         # 3. Audio playback
-        # We look for a system-level player to play the generated wav file on Ubuntu.
-        # Standard Ubuntu players: aplay, paplay, play (sox), ffplay (ffmpeg)
         player_cmd: Optional[List[str]] = None
+        backend_name: str = "none"
+
+        # Candidate Ubuntu standard audio players
         for candidate in ["aplay", "paplay", "play", "ffplay"]:
-            # Check if command exists
             try:
                 subprocess.run([candidate, "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                backend_name = candidate
                 if candidate == "ffplay":
                     player_cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(wav_path)]
                 elif candidate == "aplay":
-                    # aplay is standard ALSA player
                     player_cmd = ["aplay", "-q", str(wav_path)]
                 else:
                     player_cmd = [candidate, str(wav_path)]
@@ -232,29 +300,48 @@ class PiperSynthesizer(SpeechSynthesizer):
                 continue
 
         if not player_cmd:
-            logger.warning("No compatible Ubuntu command-line player (aplay/paplay/ffplay) detected. Toggling simulator.")
+            logger.warning("No compatible Ubuntu command-line player (aplay/paplay/ffplay) detected. Toggling simulator subtitles.")
             self.use_simulator = True
+            logger.info("TTS [playback backend selected]: 'Simulated subtitles'")
             await self._simulate_speech(text)
+            logger.info("TTS [playback completed].")
             return
 
+        logger.info("TTS [playback backend selected]: '%s'", backend_name)
+
         try:
-            # Start playing wav file
             logger.debug("Executing player command: %s", " ".join(player_cmd))
-            # Start player using python subprocess Popen (stored in self._current_process for quick interrupts)
-            play_proc = subprocess.Popen(player_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # Start player using Popen so we can cancel it via stop()
+            play_proc = subprocess.Popen(
+                player_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
             self._current_process = play_proc
 
             # Wait for player process to complete asynchronously
             while play_proc.poll() is None:
                 await asyncio.sleep(0.05)
 
-            logger.info("Speech playback completed successfully.")
+            stdout_play, stderr_play = play_proc.communicate()
+
+            if play_proc.returncode != 0:
+                # Requirement 7: print the exact stderr/stdout instead of silently continuing
+                play_error_msg = (
+                    f"CRITICAL: Audio playback backend failed with exit code {play_proc.returncode}.\n"
+                    f"STDOUT:\n{stdout_play.decode().strip()}\n"
+                    f"STDERR:\n{stderr_play.decode().strip()}"
+                )
+                print(play_error_msg)
+                logger.error(play_error_msg)
+            else:
+                logger.info("TTS [playback completed].")
 
         except Exception as e:
-            logger.error("Error during speech audio playback: %s", e)
+            logger.error("Error during speech audio playback execution: %s", e)
         finally:
             self._current_process = None
-            # Safely clean up temporary WAV file
             try:
                 if wav_path.exists():
                     wav_path.unlink()
@@ -264,9 +351,7 @@ class PiperSynthesizer(SpeechSynthesizer):
     async def _simulate_speech(self, text: str) -> None:
         """Mock speaker: Displays colored terminal subtitles with phonetic speaking delays."""
         self.console.print(f"\n🗣️  [bold yellow]JARVIS speaking:[/bold yellow] [italic white]\"{text}\"[/italic white]\n")
-        # Approximate reading speed: 15 characters per second
         reading_delay = len(text) / 15.0
-        # Cap simulated delay between 0.5s and 5s
         delay = min(max(reading_delay, 0.5), 5.0)
         await asyncio.sleep(delay)
 
@@ -275,7 +360,6 @@ class PiperSynthesizer(SpeechSynthesizer):
         if self._worker_task:
             self._worker_task.cancel()
         try:
-            # Clean up temp files
             for file in self._temp_dir.glob("tts_*.wav"):
                 file.unlink()
         except Exception:
