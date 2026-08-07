@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Awaitable
 
+from rich.console import Console
 from config.config import Settings
 from speech.microphone import MicrophoneManager
 from speech.recognizer import FasterWhisperRecognizer
@@ -69,6 +70,8 @@ class SpeechManager:
             piper_path=settings.piper.piper_path,
             use_simulator=settings.piper.use_simulator
         )
+
+        self.console = Console()
 
         # State flags
         self.is_running: bool = False
@@ -223,7 +226,7 @@ class SpeechManager:
                                         trans_result = await self.recognizer.transcribe_audio(full_audio_bytes)
 
                                         if trans_result.text.strip():
-                                            self.microphone.console.print(f"[bold green]User prompt transcribed:[/bold green] [italic]'{trans_result.text}'[/italic]")
+                                            self.console.print(f"[bold green]User prompt transcribed:[/bold green] [italic]'{trans_result.text}'[/italic]")
 
                                             # Invoke main prompt responder callback
                                             if self._speech_callback:

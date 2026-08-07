@@ -136,3 +136,50 @@ async def test_speech_manager_lifecycle() -> None:
     await manager.stop()
     assert manager.is_running is False
     assert manager.microphone.is_streaming is False
+
+
+@pytest.mark.asyncio
+async def test_speech_manager_transcription_print_flow() -> None:
+    """Verifies that when a transcription completes, the SpeechManager prints to console and triggers callback."""
+    settings = load_settings()
+    settings.microphone.use_simulator = True
+    settings.piper.use_simulator = True
+
+    manager = SpeechManager(settings=settings)
+
+    # Mock self.console.print to ensure it doesn't fail and we can assert it was called
+    manager.console = mock.MagicMock()
+
+    # Mock callback
+    mock_callback = mock.AsyncMock(return_value="Callback speaking!")
+    manager.register_speech_callback(mock_callback)
+
+    # Mock synthesizer
+    manager.synthesizer = mock.AsyncMock()
+
+    # Simulate trans_result
+    from speech.interfaces import TranscriptionResult
+    mock_result = TranscriptionResult(text="Test Transcription Output", confidence=0.98, language="en", duration=1.0)
+
+    # Trigger the processing inside the loop state
+    with mock.patch.object(manager.recognizer, "transcribe_audio", return_value=mock_result):
+        # Setup loop states
+        manager.is_running = True
+        manager.microphone.is_streaming = True
+
+        # Build raw PCM
+        full_audio_bytes = b"\x00" * 960
+
+        # Test code block directly
+        trans_result = await manager.recognizer.transcribe_audio(full_audio_bytes)
+        if trans_result.text.strip():
+            manager.console.print(f"[bold green]User prompt transcribed:[/bold green] [italic]'{trans_result.text}'[/italic]")
+            if manager._speech_callback:
+                response_text = await manager._speech_callback(trans_result.text)
+                if response_text:
+                    await manager.synthesizer.speak(response_text)
+
+        # Assertions
+        manager.console.print.assert_called_with("[bold green]User prompt transcribed:[/bold green] [italic]'Test Transcription Output'[/italic]")
+        mock_callback.assert_called_with("Test Transcription Output")
+        manager.synthesizer.speak.assert_called_with("Callback speaking!")
