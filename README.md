@@ -105,20 +105,32 @@ Install all core dependencies:
 pip install -r requirements.txt
 ```
 
-### 3. Running JARVIS Commands
+### 3. Rhasspy Piper TTS Installation
+
+Standard Ubuntu packages sometimes register a different, unrelated command-line tool as `/usr/bin/piper`. To install the correct, high-performance offline **Rhasspy Piper TTS** engine:
+
+```bash
+# Download the precompiled Piper binary release
+wget https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz
+
+# Extract the archive
+tar -xf piper_amd64.tar.gz
+
+# Move the executable directory to /opt or make a symlink
+sudo mv piper/ /opt/piper
+
+# Link the correct piper binary to your user binary path
+sudo ln -sf /opt/piper/piper /usr/local/bin/piper
+
+# Verify installation (should return help options containing '--model')
+piper --help | grep -i model
+```
+
+*Note: Update the config file (`config/settings.yaml` or `.env` variable `PIPER_PATH`) to point directly to your installed Piper executable path (e.g., `/usr/local/bin/piper` or `/opt/piper/piper`).*
+
+### 4. Running JARVIS Commands
 
 JARVIS exposes commands through `main.py` using `typer`:
-
-#### View System Version
-```bash
-python main.py version
-```
-
-#### View Active System Configurations
-Prints a beautifully-formatted hierarchical tree representing the loaded config values, merging default files with your `.env` overrides:
-```bash
-python main.py config
-```
 
 #### Start Assistant with Voice Interaction Loop
 Launches JARVIS, prints the microphone setup configurations, opens the physical audio stream, and waits for your voice:
@@ -127,6 +139,22 @@ python main.py start
 ```
 *   **Voice Test Loop**: Speak [bold yellow]'Jarvis'[/bold yellow]. The console will notify `Listening...`. Speak your command (e.g. `Hello`). JARVIS will transcribe and speak back to you directly: `You said Hello`.
 *   **Console Override**: Type `exit` or `quit` to cleanly exit the assistant.
+
+#### Run Dedicated Diagnostic Commands
+Test TTS synthesis and audio recording independently without running the main loop:
+
+```bash
+# Speaks "Hello. This is JARVIS speaking." on local audio hardware
+python main.py test-tts
+
+# Records 5 seconds from default microphone and prints local transcription
+python main.py test-mic
+```
+
+#### View Active System Configurations
+```bash
+python main.py config
+```
 
 ---
 
@@ -146,3 +174,4 @@ pytest -v
 1. **Auto-Device Selection & Resampling**: MicrophoneManager queries sounddevice and auto-selects default hardware inputs. If the hardware samplerate differs from 16kHz, linear interpolation resamples the PCM frame arrays in real-time, matching Whisper and WebRTC VAD expectations.
 2. **Deterministic Simulation Gating**: Simulator mode is disabled in production. It is activated automatically ONLY if no physical input hardware exists, if Sounddevice/PortAudio fails to load, or if explicitly enabled inside unit tests and the standalone demo.
 3. **Interruptible TTS Playback**: When new spoken responses are requested, current CLI player processes (`aplay`/`paplay`/`ffplay`) are instantly terminated, yielding zero-latency conversational cuts.
+4. **Validation of Subprocess Executables**: PiperSynthesizer strictly validates that the configured binary path actually implements the genuine `--model` argument before activating the backend. This prevents crashes due to unrelated OS tools with conflicting names.

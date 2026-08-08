@@ -50,10 +50,19 @@ class PiperSynthesizer(SpeechSynthesizer):
         self.use_simulator: bool = use_simulator
         self.console: Console = Console()
 
-        # Check if the piper executable exists at /usr/bin/piper
-        if Path("/usr/bin/piper").exists():
-            self.piper_path = "/usr/bin/piper"
-            logger.info("Auto-resolved Piper path to standard location: %s", self.piper_path)
+        # Check if the piper executable supports Piper arguments (only if not using simulator explicitly)
+        self._is_piper_valid: bool = False
+        if not self.use_simulator:
+            self._is_piper_valid = self._is_valid_piper_executable(self.piper_path)
+            if not self._is_piper_valid:
+                print("Rhasspy Piper TTS executable not found.")
+                logger.warning(
+                    "Rhasspy Piper TTS executable '%s' not found or invalid. Falling back to simulator subtitles.",
+                    self.piper_path
+                )
+                self.use_simulator = True
+        else:
+            self._is_piper_valid = False
 
         # Queuing mechanism for multiple responses
         self._speech_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -72,9 +81,36 @@ class PiperSynthesizer(SpeechSynthesizer):
         self._start_queue_worker()
 
         logger.info(
-            "PiperSynthesizer initialized (Voice: '%s', Speed: %.1fx, Piper: '%s', Simulator: %s)",
-            self.voice_model, self.speed, self.piper_path, self.use_simulator
+            "PiperSynthesizer initialized (Voice: '%s', Speed: %.1fx, Piper: '%s', Simulator: %s, Valid Executable: %s)",
+            self.voice_model, self.speed, self.piper_path, self.use_simulator, self._is_piper_valid
         )
+
+    def _is_valid_piper_executable(self, path: str) -> bool:
+        """
+        Verifies if the configured executable path points to a valid Rhasspy Piper TTS binary
+        by checking if its help output contains the '--model' parameter.
+
+        Args:
+            path: System path or command name to run.
+
+        Returns:
+            bool: True if the executable is the genuine Piper TTS engine, False otherwise.
+        """
+        try:
+            # Run command to query help parameters
+            proc = subprocess.run(
+                [path, "--help"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=2.0
+            )
+            help_output = proc.stdout + proc.stderr
+            if "--model" in help_output:
+                return True
+        except Exception:
+            pass
+        return False
 
     def _start_queue_worker(self) -> None:
         """Starts the background coroutine that monitors and plays queued speech items."""
@@ -219,18 +255,18 @@ class PiperSynthesizer(SpeechSynthesizer):
         logger.info("TTS [text received]: '%s'", text)
         logger.info("TTS [Piper executable]: '%s'", self.piper_path)
 
+        # 1. Simulator fallback: display subtitles on console (triggered if simulator is explicitly set or Piper is invalid)
+        if self.use_simulator or not self._is_piper_valid:
+            logger.info("TTS [playback backend selected]: 'Simulated subtitles'")
+            await self._simulate_speech(text)
+            logger.info("TTS [playback completed].")
+            return
+
         # Ensure model is present on disk or downloaded
         model_path = self._ensure_voice_model_exists()
         logger.info("TTS [voice model path]: '%s'", model_path)
 
         wav_path = self._temp_dir / f"tts_{hash(text) & 0xFFFFFFFF}.wav"
-
-        # 1. Simulator fallback: display subtitles on console
-        if self.use_simulator:
-            logger.info("TTS [playback backend selected]: 'Simulated subtitles'")
-            await self._simulate_speech(text)
-            logger.info("TTS [playback completed].")
-            return
 
         # 2. Piper rendering to wav file
         length_scale = 1.0 / self.speed if self.speed > 0 else 1.0
