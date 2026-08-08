@@ -1,8 +1,8 @@
 """
 JARVIS Text-to-Speech (TTS) Synthesizer Module.
 
-Implements the SpeechSynthesizer interface using Piper offline neural TTS.
-Supports async execution queues, concurrent speech cancellation, and graceful fallback.
+Implements the SpeechSynthesizer interface using Kokoro ONNX offline neural TTS.
+Supports async execution queues, automatic model downloading, and graceful fallback.
 """
 
 import asyncio
@@ -13,62 +13,55 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rich.console import Console
+import soundfile as sf
 
 from speech.interfaces import SpeechSynthesizer
 
 logger = logging.getLogger(__name__)
 
+# Try to import kokoro safely, falling back to simulator if missing
+try:
+    from kokoro_onnx import Kokoro
+    KOKORO_AVAILABLE = True
+except ImportError:
+    logger.warning("kokoro-onnx is not fully installed. Falling back to simulator subtitles.")
+    KOKORO_AVAILABLE = False
+
 
 class PiperSynthesizer(SpeechSynthesizer):
     """
-    Offline Text-to-Speech engine utilizing the fast neural Piper TTS system.
-    Supports response queuing, speed modulation, and immediate audio interruption.
+    Offline Text-to-Speech engine utilizing the lightweight, high-quality Kokoro ONNX model.
+    Maintains existing Class Name (PiperSynthesizer) and interface to preserve backward compatibility.
     """
 
     def __init__(
         self,
-        voice: str = "en_US-lessac-medium",
+        voice: str = "af_heart",
         speed: float = 1.0,
         piper_path: str = "piper",
         use_simulator: bool = False
     ) -> None:
         """
-        Initializes the PiperSynthesizer.
+        Initializes the Kokoro Synthesizer (retaining signature of PiperSynthesizer).
 
         Args:
-            voice: Name or file path of the Piper ONNX voice model.
+            voice: Name of the Kokoro voice (e.g. 'af_heart', 'af_sarah'). Maps old defaults automatically.
             speed: Speaking speed multiplier.
-            piper_path: Path to the piper executable on the system.
+            piper_path: Legacy argument preserved for compatibility.
             use_simulator: Force mock speech (subtitles) without invoking system audio players.
         """
         rate = int(150 * speed)
         super().__init__(voice_id=voice, rate=rate)
 
+        # Map legacy default voice to a high-quality Kokoro default voice
         self.voice_model: str = voice
+        if "lessac" in voice or voice == "en_US-lessac-medium" or voice == "default":
+            self.voice_model = "af_heart"
+            logger.info("Mapped legacy default Piper voice to Kokoro default voice '%s'", self.voice_model)
+
         self.speed: float = speed
-        self.piper_path: str = piper_path
-        self.use_simulator: bool = use_simulator
+        self.use_simulator: bool = use_simulator or not KOKORO_AVAILABLE
         self.console: Console = Console()
-
-        # Check if the piper executable supports Piper arguments (only if not using simulator explicitly)
-        self._is_piper_valid: bool = False
-        if not self.use_simulator:
-            self._is_piper_valid = self._is_valid_piper_executable(self.piper_path)
-            if not self._is_piper_valid:
-                print("Rhasspy Piper TTS executable not found.")
-                logger.warning(
-                    "Rhasspy Piper TTS executable '%s' not found or invalid. Falling back to simulator subtitles.",
-                    self.piper_path
-                )
-                self.use_simulator = True
-        else:
-            self._is_piper_valid = False
-
-        # Queuing mechanism for multiple responses
-        self._speech_queue: asyncio.Queue[str] = asyncio.Queue()
-        self._current_process: Optional[subprocess.Popen[bytes]] = None
-        self._worker_task: Optional[asyncio.Task[None]] = None
-        self._is_playing: bool = False
 
         # Temp directories for rendering WAVs
         self._temp_dir = Path("/tmp/jarvis_tts")
@@ -77,40 +70,68 @@ class PiperSynthesizer(SpeechSynthesizer):
         except Exception:
             self._temp_dir = Path(".")
 
-        # Start the background speech queue consumer
+        # Initialize assets directory and target model paths
+        from config.config import BASE_DIR
+        self._assets_dir = BASE_DIR / "assets"
+        self._assets_dir.mkdir(parents=True, exist_ok=True)
+
+        self.model_path = self._assets_dir / "kokoro-v1.0.int8.onnx"
+        self.voices_path = self._assets_dir / "voices-v1.0.bin"
+
+        # Queuing mechanism for multiple responses
+        self._speech_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._current_process: Optional[subprocess.Popen[bytes]] = None
+        self._worker_task: Optional[asyncio.Task[None]] = None
+        self._is_playing: bool = False
+
+        self.kokoro: Optional[Any] = None
+
+        if not self.use_simulator:
+            # Ensure model files are downloaded locally, then initialize engine
+            self._ensure_kokoro_files_exist()
+            try:
+                if KOKORO_AVAILABLE and self.model_path.exists() and self.voices_path.exists():
+                    self.kokoro = Kokoro(str(self.model_path), str(self.voices_path))
+                    logger.info("Kokoro ONNX Engine initialized successfully with model '%s'", self.model_path.name)
+                else:
+                    logger.warning("Kokoro model files are missing. Falling back to simulator subtitles.")
+                    self.use_simulator = True
+            except Exception as e:
+                logger.error("Failed to initialize Kokoro ONNX engine: %s. Toggling simulator subtitles.", e)
+                self.use_simulator = True
+
+        # Start background task queue consumer
         self._start_queue_worker()
 
         logger.info(
-            "PiperSynthesizer initialized (Voice: '%s', Speed: %.1fx, Piper: '%s', Simulator: %s, Valid Executable: %s)",
-            self.voice_model, self.speed, self.piper_path, self.use_simulator, self._is_piper_valid
+            "PiperSynthesizer (Kokoro TTS Backend) initialized (Voice: '%s', Speed: %.1fx, Simulator: %s)",
+            self.voice_model, self.speed, self.use_simulator
         )
 
-    def _is_valid_piper_executable(self, path: str) -> bool:
+    def _ensure_kokoro_files_exist(self) -> None:
         """
-        Verifies if the configured executable path points to a valid Rhasspy Piper TTS binary
-        by checking if its help output contains the '--model' parameter.
-
-        Args:
-            path: System path or command name to run.
-
-        Returns:
-            bool: True if the executable is the genuine Piper TTS engine, False otherwise.
+        Verifies and automatically downloads the Kokoro model and voice files if missing.
         """
+        import urllib.request
+
+        model_url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx"
+        voices_url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+
         try:
-            # Run command to query help parameters
-            proc = subprocess.run(
-                [path, "--help"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=2.0
-            )
-            help_output = proc.stdout + proc.stderr
-            if "--model" in help_output:
-                return True
-        except Exception:
-            pass
-        return False
+            if not self.model_path.exists():
+                logger.info("Kokoro model file missing. Downloading %s to %s...", model_url, self.model_path)
+                print("[*] Downloading Kokoro TTS model weights (~80MB)... Please wait.")
+                urllib.request.urlretrieve(model_url, self.model_path)
+                logger.info("Successfully downloaded Kokoro model file.")
+
+            if not self.voices_path.exists():
+                logger.info("Kokoro voices bin file missing. Downloading %s to %s...", voices_url, self.voices_path)
+                print("[*] Downloading Kokoro voice configurations (~27MB)... Please wait.")
+                urllib.request.urlretrieve(voices_url, self.voices_path)
+                logger.info("Successfully downloaded Kokoro voices bin.")
+
+        except Exception as e:
+            logger.error("Failed to download Kokoro TTS resources: %s. Offline mode fallback activated.", e)
 
     def _start_queue_worker(self) -> None:
         """Starts the background coroutine that monitors and plays queued speech items."""
@@ -191,126 +212,67 @@ class PiperSynthesizer(SpeechSynthesizer):
         await self._speech_queue.put(text)
         logger.debug("Text queued for synthesis: '%s'", text)
 
-    def _ensure_voice_model_exists(self) -> str:
-        """
-        Ensures that the Piper voice model ONNX file and its JSON configuration
-        exist locally. Downloads them if missing.
-
-        Returns:
-            str: Absolute path to the ONNX voice model.
-        """
-        from config.config import BASE_DIR
-        assets_dir = BASE_DIR / "assets"
-        assets_dir.mkdir(parents=True, exist_ok=True)
-
-        if Path(self.voice_model).exists():
-            return str(Path(self.voice_model).resolve())
-
-        onnx_path = assets_dir / f"{self.voice_model}.onnx"
-        json_path = assets_dir / f"{self.voice_model}.onnx.json"
-
-        if not onnx_path.exists() or not json_path.exists():
-            logger.info("Voice model '%s' not found locally at %s. Launching automatic downloader...", self.voice_model, onnx_path)
-            import urllib.request
-
-            # Parse model string (e.g. en_US-lessac-medium)
-            parts = self.voice_model.split("-")
-            if len(parts) >= 2:
-                lang_code = parts[0].split("_")[0] # en
-                country_code = parts[0] # en_US
-                voice_name = parts[1] # lessac
-                quality = parts[2] if len(parts) > 2 else "medium"
-
-                base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/{lang_code}/{country_code}/{voice_name}/{quality}"
-                onnx_url = f"{base_url}/{self.voice_model}.onnx"
-                json_url = f"{base_url}/{self.voice_model}.onnx.json"
-
-                try:
-                    logger.info("Downloading ONNX voice model from %s...", onnx_url)
-                    urllib.request.urlretrieve(onnx_url, onnx_path)
-                    logger.info("Downloading JSON config from %s...", json_url)
-                    urllib.request.urlretrieve(json_url, json_path)
-                    logger.info("Successfully downloaded voice model files to assets/.")
-                except Exception as e:
-                    logger.error("Failed to automatically download voice model: %s. Using assets fallback path.", e)
-            else:
-                logger.warning("Voice model name format not recognized. Fallback directly.")
-
-        return str(onnx_path.resolve())
-
     async def _synthesize_and_play(self, text: str) -> None:
         """
-        Performs the actual synthesis of text into speech, with subprocess rendering
-        and platform audio player fallback.
+        Performs the actual synthesis of text into speech using Kokoro-ONNX and plays the audio.
         """
-        # Requirements: Log every stage
-        # - text received
-        # - Piper executable
-        # - voice model path
-        # - synthesis started
-        # - synthesis finished
-        # - WAV output path
-        # - playback backend selected
-        # - playback completed
         logger.info("TTS [text received]: '%s'", text)
-        logger.info("TTS [Piper executable]: '%s'", self.piper_path)
 
-        # 1. Simulator fallback: display subtitles on console (triggered if simulator is explicitly set or Piper is invalid)
-        if self.use_simulator or not self._is_piper_valid:
+        # 1. Simulator fallback: display subtitles on console
+        if self.use_simulator or self.kokoro is None:
             logger.info("TTS [playback backend selected]: 'Simulated subtitles'")
             await self._simulate_speech(text)
             logger.info("TTS [playback completed].")
             return
 
-        # Ensure model is present on disk or downloaded
-        model_path = self._ensure_voice_model_exists()
-        logger.info("TTS [voice model path]: '%s'", model_path)
-
+        logger.info("TTS [voice model path]: '%s'", self.model_path)
         wav_path = self._temp_dir / f"tts_{hash(text) & 0xFFFFFFFF}.wav"
 
-        # 2. Piper rendering to wav file
-        length_scale = 1.0 / self.speed if self.speed > 0 else 1.0
-
-        piper_cmd = [
-            self.piper_path,
-            "--model", model_path,
-            "--output_file", str(wav_path),
-            "--length_scale", f"{length_scale:.2f}"
-        ]
-
-        logger.info("TTS [synthesis started]. Command: %s", " ".join(piper_cmd))
+        # 2. Kokoro Synthesis to numpy buffer
+        logger.info("TTS [synthesis started].")
         loop = asyncio.get_running_loop()
 
         try:
-            # We append a newline \n to ensure the CLI processes the input completely
-            text_input = text + "\n"
+            # Map Kokoro-ONNX compatible language codes based on voice name prefixes
+            # e.g., 'a' prefix stands for American English (en-us), 'b' stands for British English (en-gb)
+            lang = "en-us"
+            if self.voice_model.startswith("b"):
+                lang = "en-gb"
+            elif self.voice_model.startswith("j"):
+                lang = "ja"
+            elif self.voice_model.startswith("z"):
+                lang = "zh"
+            elif self.voice_model.startswith("e"):
+                lang = "es"
+            elif self.voice_model.startswith("f"):
+                lang = "fr"
+            elif self.voice_model.startswith("i"):
+                lang = "it"
+            elif self.voice_model.startswith("p"):
+                lang = "pt"
 
-            piper_proc = await asyncio.create_subprocess_exec(
-                *piper_cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+            # Execute model inference in thread pool executor to prevent stalling the main event loop
+            samples, sample_rate = await loop.run_in_executor(
+                None,
+                lambda: self.kokoro.create(
+                    text=text,
+                    voice=self.voice_model,
+                    speed=self.speed,
+                    lang=lang
+                )
             )
 
-            stdout, stderr = await piper_proc.communicate(input=text_input.encode("utf-8"))
-
-            if piper_proc.returncode != 0:
-                # Requirement 7: print the exact stderr/stdout instead of silently continuing
-                error_msg = (
-                    f"CRITICAL: Piper synthesis failed with exit code {piper_proc.returncode}.\n"
-                    f"STDOUT:\n{stdout.decode().strip()}\n"
-                    f"STDERR:\n{stderr.decode().strip()}"
-                )
-                print(error_msg)
-                logger.error(error_msg)
-                raise RuntimeError("Piper binary error")
+            # Write numpy floats directly to wav file using soundfile
+            await loop.run_in_executor(
+                None,
+                lambda: sf.write(str(wav_path), samples, sample_rate)
+            )
 
             logger.info("TTS [synthesis finished].")
             logger.info("TTS [WAV output path]: '%s'", wav_path)
 
         except Exception as e:
-            logger.warning("Piper invocation failed: %s. Falling back to simulator subtitles.", e)
-            self.use_simulator = True
+            logger.error("Kokoro synthesis failed: %s. Falling back to simulator subtitles.", e)
             logger.info("TTS [playback backend selected]: 'Simulated subtitles'")
             await self._simulate_speech(text)
             logger.info("TTS [playback completed].")
@@ -348,7 +310,7 @@ class PiperSynthesizer(SpeechSynthesizer):
         try:
             logger.debug("Executing player command: %s", " ".join(player_cmd))
 
-            # Start player using Popen so we can cancel it via stop()
+            # Start player process
             play_proc = subprocess.Popen(
                 player_cmd,
                 stdout=subprocess.PIPE,
@@ -356,14 +318,13 @@ class PiperSynthesizer(SpeechSynthesizer):
             )
             self._current_process = play_proc
 
-            # Wait for player process to complete asynchronously
+            # Wait for player process asynchronously
             while play_proc.poll() is None:
                 await asyncio.sleep(0.05)
 
             stdout_play, stderr_play = play_proc.communicate()
 
             if play_proc.returncode != 0:
-                # Requirement 7: print the exact stderr/stdout instead of silently continuing
                 play_error_msg = (
                     f"CRITICAL: Audio playback backend failed with exit code {play_proc.returncode}.\n"
                     f"STDOUT:\n{stdout_play.decode().strip()}\n"

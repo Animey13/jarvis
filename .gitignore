@@ -18,6 +18,7 @@ config/settings.local.yaml
 # Models and Assets
 assets/*.onnx
 assets/*.onnx.json
+assets/*.bin
 
 # Testing
 .pytest_cache/
