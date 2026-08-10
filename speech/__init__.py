@@ -8,7 +8,7 @@ modules for JARVIS, enabling audio input and output interfaces.
 from speech.interfaces import TranscriptionResult
 from speech.microphone import MicrophoneManager
 from speech.recognizer import FasterWhisperRecognizer
-from speech.synthesizer import PiperSynthesizer
+from speech.synthesizer import PiperSynthesizer, KokoroSynthesizer
 from speech.wakeword import WakeWordEngine
 from speech.manager import SpeechManager
 
@@ -17,6 +17,7 @@ __all__ = [
     "MicrophoneManager",
     "FasterWhisperRecognizer",
     "PiperSynthesizer",
+    "KokoroSynthesizer",
     "WakeWordEngine",
     "SpeechManager",
 ]

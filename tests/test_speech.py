@@ -10,7 +10,7 @@ import numpy as np
 from config.config import load_settings
 from speech.microphone import MicrophoneManager
 from speech.recognizer import FasterWhisperRecognizer
-from speech.synthesizer import PiperSynthesizer
+from speech.synthesizer import PiperSynthesizer, KokoroSynthesizer
 from speech.wakeword import WakeWordEngine
 from speech.manager import SpeechManager
 
@@ -112,6 +112,7 @@ async def test_speech_manager_lifecycle() -> None:
     # Force simulator modes for tests
     settings.microphone.use_simulator = True
     settings.piper.use_simulator = True
+    settings.kokoro.use_simulator = True
 
     manager = SpeechManager(settings=settings)
     assert manager.microphone.use_simulator is True
@@ -183,3 +184,57 @@ async def test_speech_manager_transcription_print_flow() -> None:
         manager.console.print.assert_called_with("[bold green]User prompt transcribed:[/bold green] [italic]'Test Transcription Output'[/italic]")
         mock_callback.assert_called_with("Test Transcription Output")
         manager.synthesizer.speak.assert_called_with("Callback speaking!")
+
+
+def test_kokoro_initialization() -> None:
+    """Verifies that KokoroSynthesizer initializes with proper attributes and configurations."""
+    # When initialized with default parameters
+    synth = KokoroSynthesizer(voice="af_sarah", speed=1.1, use_simulator=True)
+    assert synth.voice_model == "af_sarah"
+    assert synth.speed == 1.1
+    assert synth.use_simulator is True
+    assert synth.model_path.name == "kokoro-v1.0.fp16.onnx"
+    assert synth.voices_path.name == "voices-v1.0.bin"
+
+
+def test_config_provider_selection() -> None:
+    """Verifies that SpeechManager loads Kokoro or Piper synthesizer based on configured tts_provider."""
+    settings = load_settings()
+    settings.microphone.use_simulator = True
+
+    # 1. Test Kokoro selection
+    settings.speech.tts_provider = "kokoro"
+    manager_kokoro = SpeechManager(settings=settings)
+    assert isinstance(manager_kokoro.synthesizer, KokoroSynthesizer)
+
+    # 2. Test Piper selection
+    settings.speech.tts_provider = "piper"
+    manager_piper = SpeechManager(settings=settings)
+    assert isinstance(manager_piper.synthesizer, PiperSynthesizer)
+
+
+@pytest.mark.asyncio
+async def test_kokoro_synthesis_behavior_and_simulator_fallback() -> None:
+    """Tests KokoroSynthesizer synthesis flow and mock simulation fallbacks."""
+    synth = KokoroSynthesizer(voice="af_heart", use_simulator=True)
+    assert synth.use_simulator is True
+
+    # Check speak interface handles async simulation
+    with mock.patch.object(synth, "_simulate_speech") as mock_simulate:
+        await synth.speak("Hello testing")
+        # Give queue worker task time to execute
+        await asyncio.sleep(0.1)
+        assert mock_simulate.called
+
+
+def test_kokoro_missing_model_voice_assets() -> None:
+    """Verifies KokoroSynthesizer switches to simulator subtitles gracefully when model assets are missing."""
+    synth = KokoroSynthesizer(
+        voice="af_heart",
+        model_filename="non_existent_model.onnx",
+        voices_filename="non_existent_voices.bin",
+        use_simulator=False
+    )
+    # Since assets do not exist, it must automatically enable simulator to prevent crashes
+    assert synth._is_assets_valid is False
+    assert synth.use_simulator is True

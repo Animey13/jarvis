@@ -51,8 +51,8 @@ class LLMConfig:
 class SpeechConfig:
     """Speech and Audio settings."""
     input_device: str = "default"
-    tts_provider: str = "local"
-    voice_id: str = "en-US-Wavenet-D"
+    tts_provider: str = "kokoro"
+    voice_id: str = "af_heart"
 
 
 @dataclass
@@ -99,6 +99,16 @@ class PiperConfig:
 
 
 @dataclass
+class KokoroConfig:
+    """Kokoro Text-to-Speech settings."""
+    model: str = "kokoro-v1.0.fp16.onnx"
+    voices: str = "voices-v1.0.bin"
+    voice: str = "af_heart"
+    speed: float = 1.0
+    use_simulator: bool = False
+
+
+@dataclass
 class Settings:
     """Global Settings registry for JARVIS."""
     app: AppConfig = field(default_factory=AppConfig)
@@ -110,6 +120,7 @@ class Settings:
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     wakeword: WakeWordConfig = field(default_factory=WakeWordConfig)
     piper: PiperConfig = field(default_factory=PiperConfig)
+    kokoro: KokoroConfig = field(default_factory=KokoroConfig)
 
     def get_log_file_path(self) -> Path:
         """
@@ -172,6 +183,7 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     whisper_data: Dict[str, Any] = raw_config.get("whisper", {})
     wakeword_data: Dict[str, Any] = raw_config.get("wakeword", {})
     piper_data: Dict[str, Any] = raw_config.get("piper", {})
+    kokoro_data: Dict[str, Any] = raw_config.get("kokoro", {})
 
     # 5. Environment variable overrides (Upper-case representation)
 
@@ -199,8 +211,8 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
 
     # Speech overrides
     speech_input = os.getenv("SPEECH_INPUT_DEVICE", speech_data.get("input_device", "default"))
-    speech_tts = os.getenv("SPEECH_TTS_PROVIDER", speech_data.get("tts_provider", "local"))
-    speech_voice = os.getenv("SPEECH_VOICE_ID", speech_data.get("voice_id", "en-US-Wavenet-D"))
+    speech_tts = os.getenv("SPEECH_TTS_PROVIDER", speech_data.get("tts_provider", "kokoro"))
+    speech_voice = os.getenv("SPEECH_VOICE_ID", speech_data.get("voice_id", "af_heart"))
 
     # Microphone overrides
     mic_device = os.getenv("MICROPHONE_DEVICE", mic_data.get("device", "default"))
@@ -265,6 +277,18 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     piper_sim_str = os.getenv("PIPER_USE_SIMULATOR", str(piper_data.get("use_simulator", "false")))
     piper_sim = piper_sim_str.lower() in ("true", "1", "yes")
 
+    # Kokoro overrides
+    kokoro_model = os.getenv("KOKORO_MODEL", kokoro_data.get("model", "kokoro-v1.0.fp16.onnx"))
+    kokoro_voices = os.getenv("KOKORO_VOICES", kokoro_data.get("voices", "voices-v1.0.bin"))
+    kokoro_voice = os.getenv("KOKORO_VOICE", kokoro_data.get("voice", "af_heart"))
+    kokoro_speed_str = os.getenv("KOKORO_SPEED", str(kokoro_data.get("speed", 1.0)))
+    try:
+        kokoro_speed = float(kokoro_speed_str)
+    except ValueError:
+        kokoro_speed = 1.0
+    kokoro_sim_str = os.getenv("KOKORO_USE_SIMULATOR", str(kokoro_data.get("use_simulator", "false")))
+    kokoro_sim = kokoro_sim_str.lower() in ("true", "1", "yes")
+
     # 6. Instantiate settings object
     return Settings(
         app=AppConfig(
@@ -315,6 +339,13 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
             speed=piper_speed,
             piper_path=piper_path,
             use_simulator=piper_sim
+        ),
+        kokoro=KokoroConfig(
+            model=kokoro_model,
+            voices=kokoro_voices,
+            voice=kokoro_voice,
+            speed=kokoro_speed,
+            use_simulator=kokoro_sim
         )
     )
 

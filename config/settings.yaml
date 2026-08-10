@@ -18,8 +18,8 @@ llm:
 
 speech:
   input_device: "default"
-  tts_provider: "local"
-  voice_id: "en-US-Wavenet-D"
+  tts_provider: "kokoro"
+  voice_id: "af_heart"
 
 microphone:
   device: "default"
@@ -47,4 +47,11 @@ piper:
   voice: "en_US-lessac-medium"
   speed: 1.0
   piper_path: "piper"
+  use_simulator: false
+
+kokoro:
+  model: "kokoro-v1.0.fp16.onnx"
+  voices: "voices-v1.0.bin"
+  voice: "af_heart"
+  speed: 1.0
   use_simulator: false

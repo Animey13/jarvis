@@ -113,6 +113,13 @@ def config() -> None:
     piper_branch.add(f"Piper Path: [yellow]{settings.piper.piper_path}[/yellow]")
     piper_branch.add(f"Use Simulator: [yellow]{settings.piper.use_simulator}[/yellow]")
 
+    kokoro_branch = tree.add("[bold green]Text-to-Speech (Kokoro)[/bold green]")
+    kokoro_branch.add(f"Model: [yellow]{settings.kokoro.model}[/yellow]")
+    kokoro_branch.add(f"Voices: [yellow]{settings.kokoro.voices}[/yellow]")
+    kokoro_branch.add(f"Voice: [yellow]{settings.kokoro.voice}[/yellow]")
+    kokoro_branch.add(f"Speed Rate: [yellow]{settings.kokoro.speed}x[/yellow]")
+    kokoro_branch.add(f"Use Simulator: [yellow]{settings.kokoro.use_simulator}[/yellow]")
+
     console.print(tree)
 
 
@@ -132,7 +139,7 @@ def version() -> None:
 @app.command(name="test-tts")
 def test_tts() -> None:
     """
-    Speaks a test sentence using Piper offline TTS.
+    Speaks a test sentence using the configured offline TTS backend (default: Kokoro).
     Does not require a microphone.
     """
     configure_logging(
@@ -141,14 +148,26 @@ def test_tts() -> None:
         console_output=settings.logging.console_output
     )
 
-    print("[*] Initializing Piper TTS...")
-    from speech.synthesizer import PiperSynthesizer
-    synthesizer = PiperSynthesizer(
-        voice=settings.piper.voice,
-        speed=settings.piper.speed,
-        piper_path=settings.piper.piper_path,
-        use_simulator=settings.piper.use_simulator
-    )
+    provider = settings.speech.tts_provider.lower()
+    print(f"[*] Initializing active TTS backend: {provider}...")
+
+    if provider == "kokoro":
+        from speech.synthesizer import KokoroSynthesizer
+        synthesizer = KokoroSynthesizer(
+            voice=settings.speech.voice_id,
+            speed=settings.kokoro.speed,
+            model_filename=settings.kokoro.model,
+            voices_filename=settings.kokoro.voices,
+            use_simulator=settings.kokoro.use_simulator
+        )
+    else:
+        from speech.synthesizer import PiperSynthesizer
+        synthesizer = PiperSynthesizer(
+            voice=settings.piper.voice,
+            speed=settings.piper.speed,
+            piper_path=settings.piper.piper_path,
+            use_simulator=settings.piper.use_simulator
+        )
 
     test_phrase = "Hello. This is JARVIS speaking."
     print(f"[*] Speaking: '{test_phrase}'")
