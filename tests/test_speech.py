@@ -187,6 +187,19 @@ async def test_speech_manager_transcription_print_flow() -> None:
         manager.synthesizer.speak.assert_called_with("Callback speaking!")
 
 
+def test_default_config_selects_kokoro_synthesizer() -> None:
+    """Regression test: starts SpeechManager with default settings and verifies that KokoroSynthesizer is selected by default."""
+    settings = load_settings()
+    settings.microphone.use_simulator = True
+    settings.kokoro.use_simulator = True
+
+    # Assert default configured provider is kokoro
+    assert settings.speech.tts_provider == "kokoro"
+
+    manager = SpeechManager(settings=settings)
+    assert isinstance(manager.synthesizer, KokoroSynthesizer)
+
+
 def test_kokoro_initialization() -> None:
     """Verifies that KokoroSynthesizer initializes with proper attributes and configurations."""
     # When initialized with default parameters
