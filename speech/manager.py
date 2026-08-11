@@ -65,7 +65,7 @@ class SpeechManager:
 
         # 4. Initialize TTS Synthesizer based on provider
         tts_provider = settings.speech.tts_provider.lower()
-        if tts_provider == "kokoro":
+        if tts_provider in ("kokoro", "local"):
             from speech.synthesizer import KokoroSynthesizer
             self.synthesizer = KokoroSynthesizer(
                 voice=settings.speech.voice_id,

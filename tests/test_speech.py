@@ -238,3 +238,46 @@ def test_kokoro_missing_model_voice_assets() -> None:
     # Since assets do not exist, it must automatically enable simulator to prevent crashes
     assert synth._is_assets_valid is False
     assert synth.use_simulator is True
+
+
+@pytest.mark.asyncio
+async def test_kokoro_real_synthesis_generates_wav() -> None:
+    """Proves that KokoroSynthesizer (with use_simulator=False) actually generates a valid WAV file on disk."""
+    from config.config import BASE_DIR
+    model_path = BASE_DIR / "assets" / "kokoro-v1.0.int8.onnx"
+    voices_path = BASE_DIR / "assets" / "voices-v1.0.bin"
+
+    if model_path.exists() and voices_path.exists():
+        synth = KokoroSynthesizer(
+            voice="af_sky",
+            speed=1.0,
+            model_filename="kokoro-v1.0.int8.onnx",
+            voices_filename="voices-v1.0.bin",
+            use_simulator=False
+        )
+        assert synth.use_simulator is False
+        assert synth._is_assets_valid is True
+
+        with mock.patch("subprocess.Popen") as mock_popen:
+            mock_proc = mock.MagicMock()
+            mock_proc.poll.return_value = 0
+            mock_proc.communicate.return_value = (b"", b"")
+            mock_popen.return_value = mock_proc
+
+            test_text = "Integrated test for WAV output"
+            wav_file_captured = None
+
+            import soundfile as sf
+            original_sf_write = sf.write
+
+            def sf_write_spy(file, data, samplerate, **kwargs):
+                nonlocal wav_file_captured
+                wav_file_captured = Path(file)
+                return original_sf_write(file, data, samplerate, **kwargs)
+
+            with mock.patch("soundfile.write", side_effect=sf_write_spy):
+                await synth.speak(test_text)
+                await asyncio.sleep(0.5)
+
+            assert wav_file_captured is not None
+            assert wav_file_captured.suffix == ".wav"
