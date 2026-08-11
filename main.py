@@ -149,9 +149,17 @@ def test_tts() -> None:
     )
 
     provider = settings.speech.tts_provider.lower()
-    print(f"[*] Initializing active TTS backend: {provider}...")
+    print(f"[*] Initializing active TTS backend: {provider} (Defaulting to Kokoro unless Piper is explicitly configured)...")
 
-    if provider == "kokoro":
+    if provider == "piper":
+        from speech.synthesizer import PiperSynthesizer
+        synthesizer = PiperSynthesizer(
+            voice=settings.piper.voice,
+            speed=settings.piper.speed,
+            piper_path=settings.piper.piper_path,
+            use_simulator=settings.piper.use_simulator
+        )
+    else:
         from speech.synthesizer import KokoroSynthesizer
         synthesizer = KokoroSynthesizer(
             voice=settings.speech.voice_id,
@@ -159,14 +167,6 @@ def test_tts() -> None:
             model_filename=settings.kokoro.model,
             voices_filename=settings.kokoro.voices,
             use_simulator=settings.kokoro.use_simulator
-        )
-    else:
-        from speech.synthesizer import PiperSynthesizer
-        synthesizer = PiperSynthesizer(
-            voice=settings.piper.voice,
-            speed=settings.piper.speed,
-            piper_path=settings.piper.piper_path,
-            use_simulator=settings.piper.use_simulator
         )
 
     test_phrase = "Hello. This is JARVIS speaking."

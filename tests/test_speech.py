@@ -3,6 +3,7 @@ Unit tests for the JARVIS Speech Subsystem.
 """
 
 import asyncio
+from pathlib import Path
 from unittest import mock
 import pytest
 import numpy as np
@@ -258,6 +259,11 @@ async def test_kokoro_real_synthesis_generates_wav() -> None:
         assert synth.use_simulator is False
         assert synth._is_assets_valid is True
 
+        # Mock self.kokoro.create to instantly return mock audio samples (1 second of silence)
+        mock_samples = np.zeros(16000, dtype=np.float32)
+        synth.kokoro = mock.MagicMock()
+        synth.kokoro.create.return_value = (mock_samples, 16000)
+
         with mock.patch("subprocess.Popen") as mock_popen:
             mock_proc = mock.MagicMock()
             mock_proc.poll.return_value = 0
@@ -275,7 +281,7 @@ async def test_kokoro_real_synthesis_generates_wav() -> None:
                 wav_file_captured = Path(file)
                 return original_sf_write(file, data, samplerate, **kwargs)
 
-            with mock.patch("soundfile.write", side_effect=sf_write_spy):
+            with mock.patch("speech.synthesizer.sf.write", side_effect=sf_write_spy):
                 await synth.speak(test_text)
                 await asyncio.sleep(0.5)
 

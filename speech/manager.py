@@ -64,8 +64,17 @@ class SpeechManager:
         )
 
         # 4. Initialize TTS Synthesizer based on provider
+        # Defaults to Kokoro unless Piper is explicitly configured
         tts_provider = settings.speech.tts_provider.lower()
-        if tts_provider in ("kokoro", "local"):
+        if tts_provider == "piper":
+            from speech.synthesizer import PiperSynthesizer
+            self.synthesizer = PiperSynthesizer(
+                voice=settings.piper.voice,
+                speed=settings.piper.speed,
+                piper_path=settings.piper.piper_path,
+                use_simulator=settings.piper.use_simulator
+            )
+        else:
             from speech.synthesizer import KokoroSynthesizer
             self.synthesizer = KokoroSynthesizer(
                 voice=settings.speech.voice_id,
@@ -73,14 +82,6 @@ class SpeechManager:
                 model_filename=settings.kokoro.model,
                 voices_filename=settings.kokoro.voices,
                 use_simulator=settings.kokoro.use_simulator
-            )
-        else:
-            from speech.synthesizer import PiperSynthesizer
-            self.synthesizer = PiperSynthesizer(
-                voice=settings.piper.voice,
-                speed=settings.piper.speed,
-                piper_path=settings.piper.piper_path,
-                use_simulator=settings.piper.use_simulator
             )
 
         self.console = Console()
