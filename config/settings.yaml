@@ -19,7 +19,7 @@ llm:
 speech:
   input_device: "default"
   tts_provider: "kokoro"
-  voice_id: "af_heart"
+  voice_id: "af_sky"
 
 microphone:
   device: "default"
@@ -52,6 +52,6 @@ piper:
 kokoro:
   model: "kokoro-v1.0.fp16.onnx"
   voices: "voices-v1.0.bin"
-  voice: "af_heart"
+  voice: "af_sky"
   speed: 1.0
   use_simulator: false

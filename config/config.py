@@ -52,7 +52,7 @@ class SpeechConfig:
     """Speech and Audio settings."""
     input_device: str = "default"
     tts_provider: str = "kokoro"
-    voice_id: str = "af_heart"
+    voice_id: str = "af_sky"
 
 
 @dataclass
@@ -103,7 +103,7 @@ class KokoroConfig:
     """Kokoro Text-to-Speech settings."""
     model: str = "kokoro-v1.0.fp16.onnx"
     voices: str = "voices-v1.0.bin"
-    voice: str = "af_heart"
+    voice: str = "af_sky"
     speed: float = 1.0
     use_simulator: bool = False
 
@@ -212,7 +212,7 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     # Speech overrides
     speech_input = os.getenv("SPEECH_INPUT_DEVICE", speech_data.get("input_device", "default"))
     speech_tts = os.getenv("SPEECH_TTS_PROVIDER", speech_data.get("tts_provider", "kokoro"))
-    speech_voice = os.getenv("SPEECH_VOICE_ID", speech_data.get("voice_id", "af_heart"))
+    speech_voice = os.getenv("SPEECH_VOICE_ID", speech_data.get("voice_id", "af_sky"))
 
     # Microphone overrides
     mic_device = os.getenv("MICROPHONE_DEVICE", mic_data.get("device", "default"))
@@ -280,7 +280,7 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     # Kokoro overrides
     kokoro_model = os.getenv("KOKORO_MODEL", kokoro_data.get("model", "kokoro-v1.0.fp16.onnx"))
     kokoro_voices = os.getenv("KOKORO_VOICES", kokoro_data.get("voices", "voices-v1.0.bin"))
-    kokoro_voice = os.getenv("KOKORO_VOICE", kokoro_data.get("voice", "af_heart"))
+    kokoro_voice = os.getenv("KOKORO_VOICE", kokoro_data.get("voice", "af_sky"))
     kokoro_speed_str = os.getenv("KOKORO_SPEED", str(kokoro_data.get("speed", 1.0)))
     try:
         kokoro_speed = float(kokoro_speed_str)

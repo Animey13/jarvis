@@ -319,7 +319,7 @@ class KokoroSynthesizer(SpeechSynthesizer):
 
     def __init__(
         self,
-        voice: str = "af_heart",
+        voice: str = "af_sky",
         speed: float = 1.0,
         model_filename: str = "kokoro-v1.0.fp16.onnx",
         voices_filename: str = "voices-v1.0.bin",
@@ -329,7 +329,7 @@ class KokoroSynthesizer(SpeechSynthesizer):
         Initializes the KokoroSynthesizer.
 
         Args:
-            voice: Name of the Kokoro voice (e.g. 'af_heart', 'af_sarah').
+            voice: Name of the Kokoro voice (e.g. 'af_sky', 'af_sarah').
             speed: Speaking speed multiplier.
             model_filename: File name of the Kokoro ONNX model weights in assets/.
             voices_filename: File name of the Kokoro voices bin in assets/.
