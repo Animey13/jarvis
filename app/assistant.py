@@ -15,6 +15,7 @@ from rich.prompt import Prompt
 
 from config.config import Settings
 from speech.manager import SpeechManager
+from llm.ollama import OllamaClient
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +37,33 @@ class JarvisAssistant:
         self.is_running: bool = False
         self._shutdown_event: Optional[asyncio.Event] = None
 
+        # Initialize local LLM Client
+        logger.info("Initializing local LLM client...")
+        self.llm_client: OllamaClient = OllamaClient(
+            model_name=settings.llm.model,
+            api_base=settings.llm.api_base,
+            timeout=settings.llm.timeout
+        )
+
         # Initialize the Speech Manager
         logger.info("Initializing Jarvis Core Speech subsystem...")
         self.speech_manager: SpeechManager = SpeechManager(settings=settings)
 
-        # Register simple Voice Test callback: Listen -> Transcribe -> Print -> Speak
+        # Register conversational Speech responder callback: Speech -> LLM -> TTS
         async def voice_test_callback(prompt: str) -> str:
-            self.console.print(f"\n[bold green]🎙️  [Voice Test] Transcribed:[/bold green] [italic yellow]'{prompt}'[/italic yellow]")
-            # Speak the transcription back directly without LLM
-            response = f"You said {prompt}"
-            self.console.print(f"[bold blue]🎙️  [Voice Test] Speaking back:[/bold blue] [italic white]\"{response}\"[/italic white]\n")
+            self.console.print(f"\n[bold green]🎙️  [Voice Interaction] Transcribed:[/bold green] [italic yellow]'{prompt}'[/italic yellow]")
+
+            # Query local LLM server asynchronously
+            self.console.print("[dim][*] Querying local LLM server...[/dim]")
+            try:
+                system_prompt = "You are JARVIS, a helpful, polite, and extremely concise local AI assistant. Keep responses under 2-3 short sentences."
+                response = await self.llm_client.generate(prompt, system_prompt=system_prompt)
+            except Exception as e:
+                # Graceful connection/model offline fallback
+                logger.warning("Local LLM query failed: %s. Falling back to voice-reflection.", e)
+                response = f"I am currently disconnected from my local language model, but I heard you say: {prompt}"
+
+            self.console.print(f"[bold blue]🎙️  [Voice Interaction] Assistant response:[/bold blue] [italic white]\"{response}\"[/italic white]\n")
             return response
 
         self.speech_manager.register_speech_callback(voice_test_callback)
