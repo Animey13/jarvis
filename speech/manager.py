@@ -199,6 +199,13 @@ class SpeechManager:
                             # Play 'Listening...' subtitle & synthesize response
                             await self.synthesizer.speak("Listening")
 
+                            # Wait until JARVIS finishes speaking "Listening" to prevent VAD self-triggering
+                            while self.synthesizer.is_speaking:
+                                await asyncio.sleep(0.05)
+
+                            # Flush microphone queue to discard old accumulated frames and room echo
+                            self.microphone.clear_queue()
+
                             # Transition state
                             current_state = "LISTENING"
                             active_speech_buffer.clear()

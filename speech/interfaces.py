@@ -63,6 +63,13 @@ class AudioInput(ABC):
         """
         pass
 
+    @abstractmethod
+    def clear_queue(self) -> None:
+        """
+        Clears any pending captured audio data from the input stream.
+        """
+        pass
+
 
 class SpeechRecognizer(BaseSpeechToText, ABC):
     """
@@ -127,5 +134,16 @@ class SpeechSynthesizer(BaseTextToSpeech, ABC):
 
         Args:
             text: Text block to synthesize and queue.
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def is_speaking(self) -> bool:
+        """
+        Indicates whether the synthesizer is currently speaking/playing audio.
+
+        Returns:
+            bool: True if speaking, False otherwise.
         """
         pass

@@ -324,6 +324,17 @@ class MicrophoneManager(AudioInput):
             # Return silent fallback chunk on timeout
             return np.zeros(480, dtype=np.int16).tobytes()
 
+    def clear_queue(self) -> None:
+        """
+        Clears any pending captured audio data from the input stream.
+        """
+        logger.debug("Flushing microphone audio queue.")
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
     def _recover_stream(self) -> None:
         """
         Attempts to recover and rebuild the stream if hardware disconnects.

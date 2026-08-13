@@ -175,6 +175,11 @@ class PiperSynthesizer(SpeechSynthesizer):
         await self._speech_queue.put(text)
         logger.debug("Text queued for synthesis: '%s'", text)
 
+    @property
+    def is_speaking(self) -> bool:
+        """Indicates whether the synthesizer is currently speaking/playing audio."""
+        return self._is_playing
+
     def _ensure_voice_model_exists(self) -> str:
         """Ensures that the Piper voice model ONNX file and its JSON configuration exist locally."""
         from config.config import BASE_DIR
@@ -461,6 +466,11 @@ class KokoroSynthesizer(SpeechSynthesizer):
             self._start_queue_worker()
         await self._speech_queue.put(text)
         logger.debug("Text queued for synthesis: '%s'", text)
+
+    @property
+    def is_speaking(self) -> bool:
+        """Indicates whether the synthesizer is currently speaking/playing audio."""
+        return self._is_playing
 
     async def _synthesize_and_play(self, text: str) -> None:
         """Performs actual Kokoro synthesis and audio playback."""
