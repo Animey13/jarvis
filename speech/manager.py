@@ -155,9 +155,9 @@ class SpeechManager:
         silence_start_time: Optional[float] = None
         speech_started = False
         speech_start_time: Optional[float] = None
+        listening_entry_time: Optional[float] = None
 
-        # Gated history for voice activity detection smoothing
-        vad_history: List[bool] = []
+        # State tracking for wake activity gating
         recent_activity_count = 0
 
         while self.is_running:
@@ -166,16 +166,7 @@ class SpeechManager:
                 chunk = await self.microphone.read_chunk()
 
                 # Run voice activity check on chunk
-                is_voice_raw = self.recognizer.is_speech(chunk)
-
-                # Apply sliding window smoothing (size 10)
-                vad_history.append(is_voice_raw)
-                if len(vad_history) > 10:
-                    vad_history.pop(0)
-
-                # Majority vote: voice is active if at least 4 out of the last 10 frames are voice.
-                # This rejects transient single-frame clicks/noises and stabilizes VAD.
-                is_voice = sum(vad_history) >= 4
+                is_voice = self.recognizer.is_speech(chunk)
 
                 if current_state == "WAKING":
                     # --- STATE 1: Gated Wake Word Detection ---
@@ -212,15 +203,13 @@ class SpeechManager:
                             # Flush microphone queue to discard old accumulated frames and room echo
                             self.microphone.clear_queue()
 
-                            # Clear the smoothing window for the new state
-                            vad_history.clear()
-
                             # Transition state
                             current_state = "LISTENING"
                             active_speech_buffer.clear()
                             silence_start_time = None
                             speech_started = False
                             speech_start_time = None
+                            listening_entry_time = time.time()
 
                 elif current_state == "LISTENING":
                     # --- STATE 2: User Voice Activity Recording ---
@@ -272,14 +261,13 @@ class SpeechManager:
                                     current_state = "WAKING"
                                     active_speech_buffer.clear()
                                     speech_started = False
-                                    vad_history.clear()
 
                         else:
                             # If we haven't even started speaking, keep buffer size bounded to preserve pre-speech context (1.0s)
                             if len(active_speech_buffer) > 33:
                                 active_speech_buffer.pop(0)
 
-                    # Strict Safety Net: enforce maximum recording limit of 5.0 seconds even if VAD is continuously triggered by room hum
+                    # Strict Safety Net: enforce maximum recording limit of 5.0 seconds even if VAD is continuously triggered
                     if speech_started and (time.time() - speech_start_time) >= 5.0:
                         logger.info("VAD: Maximum recording duration (5.0s) reached. Terminating recording.")
                         current_state = "TRANSCRIBING"
@@ -297,7 +285,13 @@ class SpeechManager:
                         current_state = "WAKING"
                         active_speech_buffer.clear()
                         speech_started = False
-                        vad_history.clear()
+
+                    # Idle Safety Net: if the user does not speak at all within 5 seconds of entering LISTENING state, timeout and return to WAKING
+                    if not speech_started and listening_entry_time and (time.time() - listening_entry_time) >= 5.0:
+                        logger.info("VAD: Listening state idle timeout reached. Returning to WAKING.")
+                        current_state = "WAKING"
+                        active_speech_buffer.clear()
+                        speech_started = False
 
             except asyncio.CancelledError:
                 break
