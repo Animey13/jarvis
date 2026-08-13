@@ -1,0 +1,30 @@
+[
+  {
+    "content": "What time is it?",
+    "metadata": {
+      "role": "user",
+      "timestamp": 1786631478.5135622
+    }
+  },
+  {
+    "content": "The current system time is Sunday, April 13, 2025, 03:00 PM.",
+    "metadata": {
+      "role": "assistant",
+      "timestamp": 1786631478.5140433
+    }
+  },
+  {
+    "content": "What time is it?",
+    "metadata": {
+      "role": "user",
+      "timestamp": 1786631512.7082005
+    }
+  },
+  {
+    "content": "The current system time is Sunday, April 13, 2025, 03:00 PM.",
+    "metadata": {
+      "role": "assistant",
+      "timestamp": 1786631512.7087321
+    }
+  }
+]
