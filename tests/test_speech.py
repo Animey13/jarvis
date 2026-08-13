@@ -22,7 +22,7 @@ def test_speech_config_loading() -> None:
     assert settings.microphone.sample_rate == 16000
     assert settings.microphone.channels == 1
     assert settings.vad.sensitivity == 3
-    assert settings.vad.silence_timeout == 1.5
+    assert settings.vad.silence_timeout == 1.0
     assert settings.whisper.model == "tiny"
     assert settings.wakeword.phrase == "jarvis"
     assert settings.piper.voice == "en_US-lessac-medium"

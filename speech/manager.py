@@ -1,7 +1,7 @@
 """
 JARVIS Speech Orchestration Manager.
 
-Coordinates MicrophoneManager, WakeWordEngine, FasterWhisperRecognizer, and PiperSynthesizer
+Coordinates MicrophoneManager, WakeWordEngine, FasterWhisperRecognizer, and PiperSynthesizer/KokoroSynthesizer
 into a unified, stateful, and reactive speech interaction layer.
 """
 
@@ -14,7 +14,7 @@ from rich.console import Console
 from config.config import Settings
 from speech.microphone import MicrophoneManager
 from speech.recognizer import FasterWhisperRecognizer
-from speech.synthesizer import PiperSynthesizer
+from speech.synthesizer import PiperSynthesizer, KokoroSynthesizer
 from speech.wakeword import WakeWordEngine
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class SpeechManager:
     """
     Central manager that orchestrates JARVIS's voice-in and voice-out loop.
     Implements a robust state machine for wake word spotting, VAD-based recording,
-    Whisper transcription, and Piper TTS synthesis.
+    Whisper transcription, and local TTS synthesis.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -67,7 +67,6 @@ class SpeechManager:
         # Defaults to Kokoro unless Piper is explicitly configured
         tts_provider = settings.speech.tts_provider.lower()
         if tts_provider == "piper":
-            from speech.synthesizer import PiperSynthesizer
             self.synthesizer = PiperSynthesizer(
                 voice=settings.piper.voice,
                 speed=settings.piper.speed,
@@ -75,7 +74,6 @@ class SpeechManager:
                 use_simulator=settings.piper.use_simulator
             )
         else:
-            from speech.synthesizer import KokoroSynthesizer
             self.synthesizer = KokoroSynthesizer(
                 voice=settings.speech.voice_id,
                 speed=settings.kokoro.speed,
@@ -93,7 +91,7 @@ class SpeechManager:
         # User defined speech callback (async func taking user prompt, returning response)
         self._speech_callback: Optional[Callable[[str], Awaitable[str]]] = None
 
-        logger.info("SpeechManager successfully initialized.")
+        logger.info("SpeechManager successfully initialized with backend: %s", self.synthesizer.__class__.__name__)
 
     def register_speech_callback(self, callback: Callable[[str], Awaitable[str]]) -> None:
         """
@@ -158,7 +156,8 @@ class SpeechManager:
         speech_started = False
         speech_start_time: Optional[float] = None
 
-        # Keep a history of VAD states to optimize wake detection
+        # Gated history for voice activity detection smoothing
+        vad_history: List[bool] = []
         recent_activity_count = 0
 
         while self.is_running:
@@ -167,11 +166,19 @@ class SpeechManager:
                 chunk = await self.microphone.read_chunk()
 
                 # Run voice activity check on chunk
-                is_voice = self.recognizer.is_speech(chunk)
+                is_voice_raw = self.recognizer.is_speech(chunk)
+
+                # Apply sliding window smoothing (size 10)
+                vad_history.append(is_voice_raw)
+                if len(vad_history) > 10:
+                    vad_history.pop(0)
+
+                # Majority vote: voice is active if at least 4 out of the last 10 frames are voice.
+                # This rejects transient single-frame clicks/noises and stabilizes VAD.
+                is_voice = sum(vad_history) >= 4
 
                 if current_state == "WAKING":
                     # --- STATE 1: Gated Wake Word Detection ---
-                    # To minimize CPU load, we only accumulate frames if there is active sound
                     if is_voice:
                         rolling_wake_buffer.append(chunk)
                         recent_activity_count = 10  # Hold active state for next 10 frames (~300ms)
@@ -184,7 +191,6 @@ class SpeechManager:
                         rolling_wake_buffer.pop(0)
 
                     # Periodically check if we accumulated enough audio and have voice activity
-                    # Let's run Whisper check if the buffer is reasonably populated and activity has quieted down
                     if len(rolling_wake_buffer) >= 20 and recent_activity_count == 0:
                         full_audio = b"".join(rolling_wake_buffer)
                         rolling_wake_buffer.clear()
@@ -206,6 +212,9 @@ class SpeechManager:
                             # Flush microphone queue to discard old accumulated frames and room echo
                             self.microphone.clear_queue()
 
+                            # Clear the smoothing window for the new state
+                            vad_history.clear()
+
                             # Transition state
                             current_state = "LISTENING"
                             active_speech_buffer.clear()
@@ -220,7 +229,7 @@ class SpeechManager:
                     if is_voice:
                         # User is speaking
                         if not speech_started:
-                            logger.debug("Active user speech started.")
+                            logger.info("Active user speech started.")
                             speech_started = True
                             speech_start_time = time.time()
                         silence_start_time = None  # Reset silence timer
@@ -231,10 +240,11 @@ class SpeechManager:
                                 silence_start_time = time.time()
                             else:
                                 elapsed_silence = time.time() - silence_start_time
-                                if elapsed_silence >= self.recognizer.silence_timeout:
-                                    # User has finished speaking!
-                                    elapsed_speech = time.time() - speech_start_time
-                                    logger.info("VAD: Silence timeout reached. Total speaking duration: %.2fs", elapsed_speech)
+                                elapsed_speech = time.time() - speech_start_time
+
+                                # Terminate capture if silence interval exceeded OR maximum command duration (5.0s) reached
+                                if elapsed_silence >= self.recognizer.silence_timeout or elapsed_speech >= 5.0:
+                                    logger.info("VAD: Stop boundary reached. Silence: %.2fs, Speech: %.2fs", elapsed_silence, elapsed_speech)
 
                                     # Gating: check minimum speech duration
                                     if elapsed_speech >= self.recognizer.min_speech_duration:
@@ -262,11 +272,32 @@ class SpeechManager:
                                     current_state = "WAKING"
                                     active_speech_buffer.clear()
                                     speech_started = False
+                                    vad_history.clear()
 
                         else:
                             # If we haven't even started speaking, keep buffer size bounded to preserve pre-speech context (1.0s)
                             if len(active_speech_buffer) > 33:
                                 active_speech_buffer.pop(0)
+
+                    # Strict Safety Net: enforce maximum recording limit of 5.0 seconds even if VAD is continuously triggered by room hum
+                    if speech_started and (time.time() - speech_start_time) >= 5.0:
+                        logger.info("VAD: Maximum recording duration (5.0s) reached. Terminating recording.")
+                        current_state = "TRANSCRIBING"
+
+                        full_audio_bytes = b"".join(active_speech_buffer)
+                        trans_result = await self.recognizer.transcribe_audio(full_audio_bytes)
+
+                        if trans_result.text.strip():
+                            self.console.print(f"[bold green]User prompt transcribed:[/bold green] [italic]'{trans_result.text}'[/italic]")
+                            if self._speech_callback:
+                                response_text = await self._speech_callback(trans_result.text)
+                                if response_text:
+                                    await self.synthesizer.speak(response_text)
+
+                        current_state = "WAKING"
+                        active_speech_buffer.clear()
+                        speech_started = False
+                        vad_history.clear()
 
             except asyncio.CancelledError:
                 break
