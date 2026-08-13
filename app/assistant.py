@@ -16,6 +16,7 @@ from rich.prompt import Prompt
 from config.config import Settings
 from speech.manager import SpeechManager
 from llm.ollama import OllamaClient
+from memory.local_json import LocalJSONMemory
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,10 @@ class JarvisAssistant:
             timeout=settings.llm.timeout
         )
 
+        # Initialize local episodic JSON memory
+        logger.info("Initializing local memory driver...")
+        self.memory: LocalJSONMemory = LocalJSONMemory()
+
         # Initialize the Speech Manager
         logger.info("Initializing Jarvis Core Speech subsystem...")
         self.speech_manager: SpeechManager = SpeechManager(settings=settings)
@@ -53,11 +58,34 @@ class JarvisAssistant:
         async def voice_test_callback(prompt: str) -> str:
             self.console.print(f"\n[bold green]🎙️  [Voice Interaction] Transcribed:[/bold green] [italic yellow]'{prompt}'[/italic yellow]")
 
-            # Query local LLM server asynchronously
+            # 1. Retrieve N recent conversation turns to inject context
+            try:
+                history_turns = await self.memory.retrieve("", limit=4)
+                context_str = ""
+                if history_turns:
+                    context_str = "Recent conversation context:\n"
+                    for turn in history_turns:
+                        role = turn.get("metadata", {}).get("role", "user").upper()
+                        content = turn.get("content", "")
+                        context_str += f"{role}: {content}\n"
+                    context_str += "\n"
+            except Exception as e:
+                logger.error("Failed to retrieve conversation history: %s", e)
+                context_str = ""
+
+            # 2. Build contextual prompt
+            full_prompt = f"{context_str}Current User Prompt: {prompt}"
+
+            # 3. Query local LLM server asynchronously
             self.console.print("[dim][*] Querying local LLM server...[/dim]")
             try:
                 system_prompt = "You are JARVIS, a helpful, polite, and extremely concise local AI assistant. Keep responses under 2-3 short sentences."
-                response = await self.llm_client.generate(prompt, system_prompt=system_prompt)
+                response = await self.llm_client.generate(full_prompt, system_prompt=system_prompt)
+
+                # 4. Store the successful conversation turn in memory
+                await self.memory.store(prompt, {"role": "user"})
+                await self.memory.store(response, {"role": "assistant"})
+
             except Exception as e:
                 # Graceful connection/model offline fallback
                 logger.warning("Local LLM query failed: %s. Falling back to voice-reflection.", e)
