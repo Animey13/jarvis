@@ -148,9 +148,11 @@ class FasterWhisperRecognizer(SpeechRecognizer):
                 None,
                 lambda: self.model.transcribe(
                     audio_np,
-                    beam_size=5,
+                    beam_size=1,        # Greedy decoding for ultra-low CPU latency
                     language=self.language,
-                    vad_filter=True
+                    vad_filter=False,   # Disable duplicate VAD filtering (already filtered by webrtcvad)
+                    temperature=0.0,    # Prevent temperature trial overhead
+                    best_of=1           # No duplicate candidate generations
                 )
             )
 
