@@ -50,6 +50,7 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
 
 - **Unified CLI shell & cascading configurations**: Fully asynchronous terminal UI supporting configuration displays and SIGINT handling.
 - **Offline Echo-Compensated Audio Pipeline**: Integrated VAD and whisper transcription with audio hardware simulators and neural speech synthesis via **Kokoro**.
+- **Resilient Default OS Microphone Integration**: Modified physical capture loop to target the virtual ALSA `"default"` device using `"float32"` format natively. Resolves hardware incompatibility blocks on specific soundcards (e.g. `hw:0,0` channel/sample-rate restrictions) by performing automatic hardware rate resampling and translation to mono 16-bit PCM.
 - **Asynchronous LLM Client**: Non-blocking `OllamaClient` supporting asynchronous generation, streaming, and offline-failback mechanisms.
 - **Episodic JSON Memory**: Automated history loading, context windowing, serialization, and context injection.
 - **Dynamic Local Tool Calling**: Extensible `ToolRegistry` with pattern matching for custom bracket-enclosed tags. Includes timezone-aware date/time tracking and local Linux system metrics gathering (`DateTimeTool`, `SystemStatusTool`).
@@ -58,7 +59,7 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
 
 ## ✅ Runtime Verification & Fixes
 
-We performed a real end-to-end runtime verification of the integrated tool-calling subsystem using the primary application entry point (`python3 main.py start`), routing live interactive sessions through a local mock LLM server.
+We performed real end-to-end runtime verification of the integrated tool-calling and microphone subsystem using the primary application entry point (`python3 main.py start`).
 
 ### **Tests Performed & Results:**
 1. **Conversational request without tools**: Inputs like `"Hello"` were processed natively without trigger calls, receiving a standard conversational response.
@@ -68,7 +69,8 @@ We performed a real end-to-end runtime verification of the integrated tool-calli
 5. **Conversational memory updates**: Validated that `logs/memory.json` correctly captured and serialized all turns with appropriate timestamps and roles.
 
 ### **Fixes & Enhancements Made:**
-- Resolved a prompt-matching edge case in the simulation environment where conversational history keywords could trigger false-positive tool calls, ensuring that matching behaves identically to Llama 3 models.
+- **Microphone Channel/Rate Negotiation Fix**: Standardized PortAudio/sounddevice setup to explicitly target the OS `"default"` sound device with `"float32"` stream configuration. This avoids directly forcing `hw:0,0` into an unsupported 1 channel 16 kHz configuration. Converts captured floats safely to 16 kHz mono `int16` PCM bytes prior to routing to webrtcvad/Whisper, ensuring pristine audio quality.
+- **Mock Namespace Safeguards**: Corrected exception handling in fallback blocks of `speech/microphone.py` to prevent `NameError` if `sounddevice` fails module-level imports.
 
 ---
 

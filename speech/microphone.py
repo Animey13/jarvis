@@ -21,6 +21,7 @@ try:
 except (ImportError, OSError) as e:
     logger.warning("sounddevice or PortAudio library not available. Falling back to simulated microphone. Error: %s", e)
     SOUNDDEVICE_AVAILABLE = False
+    sd = None
 
 
 class MicrophoneManager(AudioInput):
@@ -56,7 +57,7 @@ class MicrophoneManager(AudioInput):
         self._device_name: str = "Simulated Virtual Microphone"
         self._actual_sample_rate: int = sample_rate
 
-        if SOUNDDEVICE_AVAILABLE:
+        if SOUNDDEVICE_AVAILABLE and sd is not None:
             try:
                 devices = sd.query_devices()
                 input_devices = [d for d in devices if d.get("max_input_channels", 0) > 0]
@@ -106,6 +107,13 @@ class MicrophoneManager(AudioInput):
         """
         Automatically selects the default or first available physical input device.
         """
+        if self.device_config == "default":
+            self._physical_device_idx = "default"
+            self._device_name = "default"
+            self._actual_sample_rate = self.sample_rate
+            logger.info("Using default OS sound device explicitly.")
+            return
+
         try:
             devices = sd.query_devices()
 
@@ -170,7 +178,7 @@ class MicrophoneManager(AudioInput):
         Returns:
             List[Dict[str, Any]]: List of device maps, or mock devices if offline/missing.
         """
-        if self.use_simulator or not SOUNDDEVICE_AVAILABLE:
+        if self.use_simulator or not SOUNDDEVICE_AVAILABLE or sd is None:
             return [{"name": "Simulated Virtual Microphone", "index": 0, "max_input_channels": 1}]
 
         try:
@@ -217,25 +225,29 @@ class MicrophoneManager(AudioInput):
             if src_rate == dst_rate:
                 return samples
             num_samples_dst = int(len(samples) * (dst_rate / src_rate))
-            return np.interp(
+            resampled = np.interp(
                 np.linspace(0, len(samples), num_samples_dst, endpoint=False),
                 np.arange(len(samples)),
                 samples
-            ).astype(np.int16)
+            )
+            return resampled.astype(np.float32)
 
         def audio_callback(indata: np.ndarray, frames: int, time_info: Any, status: Any) -> None:
             """Callback from PortAudio running on separate OS thread."""
             if status:
                 logger.warning("PortAudio status warning: %s", status)
 
-            # Convert captured buffer to int16 samples and resample if necessary
-            samples = indata[:, 0]  # Take channel 0
+            # Convert captured buffer from float32 to int16 samples and resample if necessary
+            samples_float32 = indata[:, 0]  # Take channel 0
 
             if self._actual_sample_rate != self.sample_rate:
-                samples = resample_audio(samples, self._actual_sample_rate, self.sample_rate)
+                samples_float32 = resample_audio(samples_float32, self._actual_sample_rate, self.sample_rate)
+
+            # Convert float32 (-1.0 to 1.0) to int16 (-32768 to 32767)
+            samples_int16 = (samples_float32 * 32768.0).clip(-32768.0, 32767.0).astype(np.int16)
 
             # Ensure we deliver 30ms-equivalent blocks if possible, or directly deliver
-            raw_bytes = samples.tobytes()
+            raw_bytes = samples_int16.tobytes()
             if self._loop and self.is_streaming:
                 self._loop.call_soon_threadsafe(self._audio_queue.put_nowait, raw_bytes)
 
@@ -254,7 +266,7 @@ class MicrophoneManager(AudioInput):
                     device=self._physical_device_idx,
                     samplerate=rate,
                     channels=self.channels,
-                    dtype="int16",
+                    dtype="float32",
                     callback=audio_callback,
                     blocksize=block_size
                 )
