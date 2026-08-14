@@ -26,5 +26,19 @@
       "role": "assistant",
       "timestamp": 1786631512.7087321
     }
+  },
+  {
+    "content": "What time is it?",
+    "metadata": {
+      "role": "user",
+      "timestamp": 1786696018.7960453
+    }
+  },
+  {
+    "content": "The current system time is Sunday, April 13, 2025, 03:00 PM.",
+    "metadata": {
+      "role": "assistant",
+      "timestamp": 1786696018.7972615
+    }
   }
 ]
