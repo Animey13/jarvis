@@ -191,21 +191,16 @@ class SpeechManager:
 
                         # Process wake word check
                         if self.wakeword.detect_in_text(transcription.text, transcription.confidence):
-                            logger.info("Wake word triggered. Transiting to LISTENING state.")
+                            logger.info("Wake word triggered. Transitioning to LISTENING state.")
+                            self.console.print("[bold yellow]🎙️  [Wake Word] 'Jarvis' detected! Listening...[/bold yellow]")
 
-                            # Play 'Listening...' subtitle & synthesize response
-                            await self.synthesizer.speak("Listening")
-
-                            # Wait until JARVIS finishes speaking "Listening" to prevent VAD self-triggering
-                            while self.synthesizer.is_speaking:
-                                await asyncio.sleep(0.05)
-
-                            # Flush microphone queue to discard old accumulated frames and room echo
+                            # Flush microphone queue and audio buffers to discard wake audio frames and stale data
                             self.microphone.clear_queue()
-
-                            # Transition state
-                            current_state = "LISTENING"
+                            rolling_wake_buffer.clear()
                             active_speech_buffer.clear()
+
+                            # Transition state directly
+                            current_state = "LISTENING"
                             silence_start_time = None
                             speech_started = False
                             speech_start_time = None
@@ -252,6 +247,9 @@ class SpeechManager:
                                                 response_text = await self._speech_callback(trans_result.text)
                                                 if response_text:
                                                     await self.synthesizer.speak(response_text)
+                                                    while self.synthesizer.is_speaking:
+                                                        await asyncio.sleep(0.05)
+                                                    self.microphone.clear_queue()
                                         else:
                                             logger.info("Transcribed audio yielded empty text. Discarding block.")
                                     else:
@@ -281,6 +279,9 @@ class SpeechManager:
                                 response_text = await self._speech_callback(trans_result.text)
                                 if response_text:
                                     await self.synthesizer.speak(response_text)
+                                    while self.synthesizer.is_speaking:
+                                        await asyncio.sleep(0.05)
+                                    self.microphone.clear_queue()
 
                         current_state = "WAKING"
                         active_speech_buffer.clear()

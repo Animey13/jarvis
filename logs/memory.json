@@ -96,5 +96,33 @@
       "role": "assistant",
       "timestamp": 1786715853.3610444
     }
+  },
+  {
+    "content": "What time is it?",
+    "metadata": {
+      "role": "user",
+      "timestamp": 1786735969.9999547
+    }
+  },
+  {
+    "content": "The current system time is Sunday, April 13, 2025, 03:00 PM.",
+    "metadata": {
+      "role": "assistant",
+      "timestamp": 1786735970.0012107
+    }
+  },
+  {
+    "content": "Hello Jarvis",
+    "metadata": {
+      "role": "user",
+      "timestamp": 1786736156.3865356
+    }
+  },
+  {
+    "content": "Hello! I am JARVIS. I heard you loud and clear.",
+    "metadata": {
+      "role": "assistant",
+      "timestamp": 1786736156.3871992
+    }
   }
 ]
