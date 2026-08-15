@@ -170,34 +170,39 @@ class SpeechManager:
 
                 if current_state == "WAKING":
                     # --- STATE 1: Gated Wake Word Detection ---
+                    rolling_wake_buffer.append(chunk)
+
                     if is_voice:
-                        rolling_wake_buffer.append(chunk)
-                        recent_activity_count = 10  # Hold active state for next 10 frames (~300ms)
+                        recent_activity_count = 10  # Hold active voice state for ~300ms
                     elif recent_activity_count > 0:
-                        rolling_wake_buffer.append(chunk)
                         recent_activity_count -= 1
 
-                    # Keep rolling wake buffer bounded at maximum 2 seconds (~66 frames)
-                    if len(rolling_wake_buffer) > 66:
+                    # Keep rolling wake buffer bounded at maximum ~1.5s (50 frames of 30ms)
+                    if len(rolling_wake_buffer) > 50:
                         rolling_wake_buffer.pop(0)
 
-                    # Periodically check if we accumulated enough audio and have voice activity
-                    if len(rolling_wake_buffer) >= 20 and recent_activity_count == 0:
+                    # Transcribe when enough audio is accumulated (~1.0s, 33 frames) AND voice activity is active
+                    if len(rolling_wake_buffer) >= 33 and recent_activity_count > 0:
                         full_audio = b"".join(rolling_wake_buffer)
-                        rolling_wake_buffer.clear()
+
+                        # Slide buffer by 10 frames (~300ms) for continuous sliding window
+                        del rolling_wake_buffer[:10]
 
                         # Fast transcribe in background
                         transcription = await self.recognizer.transcribe_audio(full_audio)
 
+                        logger.info("Wake word candidate text: '%s' (Confidence: %.2f)", transcription.text, transcription.confidence)
+
                         # Process wake word check
                         if self.wakeword.detect_in_text(transcription.text, transcription.confidence):
-                            logger.info("Wake word triggered. Transitioning to LISTENING state.")
+                            logger.info("Wake word triggered by text '%s'. Transitioning to LISTENING state.", transcription.text)
                             self.console.print("[bold yellow]🎙️  [Wake Word] 'Jarvis' detected! Listening...[/bold yellow]")
 
                             # Flush microphone queue and audio buffers to discard wake audio frames and stale data
                             self.microphone.clear_queue()
                             rolling_wake_buffer.clear()
                             active_speech_buffer.clear()
+                            recent_activity_count = 0
 
                             # Transition state directly
                             current_state = "LISTENING"

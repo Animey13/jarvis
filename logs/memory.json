@@ -152,5 +152,33 @@
       "role": "assistant",
       "timestamp": 1786823146.109335
     }
+  },
+  {
+    "content": "What time is it?",
+    "metadata": {
+      "role": "user",
+      "timestamp": 1786827284.3395255
+    }
+  },
+  {
+    "content": "The current system time is Sunday, April 13, 2025, 03:00 PM.",
+    "metadata": {
+      "role": "assistant",
+      "timestamp": 1786827284.3408308
+    }
+  },
+  {
+    "content": "Hello Jarvis",
+    "metadata": {
+      "role": "user",
+      "timestamp": 1786827427.9487765
+    }
+  },
+  {
+    "content": "Hello! I am JARVIS. How can I assist you today?",
+    "metadata": {
+      "role": "assistant",
+      "timestamp": 1786827427.950102
+    }
   }
 ]
