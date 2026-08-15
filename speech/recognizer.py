@@ -8,6 +8,7 @@ Incorporates webrtcvad for precise silence/speech boundary detection.
 import asyncio
 import logging
 import time
+import wave
 from typing import Any, Dict, List, Optional
 import numpy as np
 import webrtcvad
@@ -126,6 +127,17 @@ class FasterWhisperRecognizer(SpeechRecognizer):
             logger.error("Failed to process audio bytes: %s", e)
             return TranscriptionResult(text="", confidence=0.0, language=self.language, duration=0.0)
 
+        # Save post-wake audio buffer to /tmp/jarvis-debug-command.wav
+        try:
+            with wave.open("/tmp/jarvis-debug-command.wav", "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(audio_data)
+            logger.info("Saved post-wake debug audio buffer to /tmp/jarvis-debug-command.wav (%d bytes)", len(audio_data))
+        except Exception as e:
+            logger.warning("Failed to save debug wav file: %s", e)
+
         # Fallback to simulation mode if model failed to load
         if self.model is None:
             logger.warning("Whisper model is not loaded. Returning simulated/interactive transcription.")
@@ -139,6 +151,24 @@ class FasterWhisperRecognizer(SpeechRecognizer):
                 duration=duration
             )
 
+        # Calculate audio diagnostics
+        min_val = float(np.min(audio_np)) if len(audio_np) > 0 else 0.0
+        max_val = float(np.max(audio_np)) if len(audio_np) > 0 else 0.0
+        rms_val = float(np.sqrt(np.mean(audio_np**2))) if len(audio_np) > 0 else 0.0
+        peak_val = float(np.max(np.abs(audio_np))) if len(audio_np) > 0 else 0.0
+
+        logger.info(
+            "Whisper Transcribe Diagnostics: len_bytes=%d, shape=%s, dtype=%s, duration=%.2fs, min=%.4f, max=%.4f, RMS=%.4f, peak=%.4f",
+            len(audio_data),
+            audio_np.shape,
+            audio_np.dtype,
+            duration,
+            min_val,
+            max_val,
+            rms_val,
+            peak_val
+        )
+
         logger.info("Transcribing %d bytes of audio (~%.2fs)...", len(audio_data), duration)
 
         # Whisper model.transcribe is blocking, run in a background executor
@@ -148,11 +178,11 @@ class FasterWhisperRecognizer(SpeechRecognizer):
                 None,
                 lambda: self.model.transcribe(
                     audio_np,
-                    beam_size=1,        # Greedy decoding for ultra-low CPU latency
+                    beam_size=5,        # Conservative decoding configuration
                     language=self.language,
                     vad_filter=False,   # Disable duplicate VAD filtering (already filtered by webrtcvad)
                     temperature=0.0,    # Prevent temperature trial overhead
-                    best_of=1           # No duplicate candidate generations
+                    best_of=5           # Conservative candidate beam selection
                 )
             )
 
