@@ -11,8 +11,9 @@ ENV/
 env/
 .env
 
-# Configuration / Logs
+# Configuration / Logs & Memory
 logs/*.log
+logs/*.json
 config/settings.local.yaml
 
 # Models and Assets
@@ -24,6 +25,7 @@ assets/*.bin
 .pytest_cache/
 .coverage
 htmlcov/
+/tmp/jarvis-debug-command.wav
 
 # IDE / Editor
 .vscode/
