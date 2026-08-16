@@ -20,65 +20,56 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
                          │              │              │
                          ▼              ▼              ▼
 ┌───────────────────────────┐ ┌────────────┐ ┌───────────────────┐
-│       SpeechManager       │ │LLM Client  │ │Memory Layer       │
-│  (webrtcvad, sounddevice, │ │(Ollama)    │ │(LocalJSONMemory)  │
-│   faster-whisper, Kokoro) │ └────────────┘ └───────────────────┘
-└───────────────────────────┘
-                         │
-                         ▼
-┌───────────────────────────┐
-│       ToolRegistry        │
-│   (DateTime / SysStatus)  │
-└───────────────────────────┘
+│       SpeechManager       │ │ JarvisCore │ │Memory Layer       │
+│  (webrtcvad, sounddevice, │ │ (app/core) │ │(LocalJSONMemory)  │
+│   faster-whisper, Kokoro) │ └─────┬──────┘ └───────────────────┘
+└───────────────────────────┘       │
+                                    ▼
+                             ┌──────────────┐
+                             │ OllamaClient │
+                             └──────────────┘
 ```
 
 ---
 
 ## 📦 Core Subsystems & Directory Tree
 
-- **`app/`**: Core lifecycle controller, console formatting, and orchestrator (`assistant.py`, `logging_config.py`).
+- **`app/`**: Core lifecycle controller, intelligence orchestrator, and console formatting (`assistant.py`, `core.py`, `logging_config.py`).
 - **`config/`**: Cascading YAML and environment-overridden configuration manager (`config.py`, `settings.yaml`).
 - **`speech/`**: Speech recognition, wake-word spotting, sounddevice stream captures, and neural speech synthesis (`interfaces.py`, `microphone.py`, `recognizer.py`, `wakeword.py`, `synthesizer.py`, `manager.py`).
-- **`llm/`**: Async client wrapper for local language models (`ollama.py`).
+- **`llm/`**: Async client wrapper for local language models (`base.py`, `ollama.py`).
 - **`memory/`**: Episodic chat histories persistence layer (`local_json.py`).
 - **`tools/`**: Local extensible OS and status tools registry (`base.py`, `registry.py`, `system_tools.py`).
-- **`tests/`**: Full pytest coverage (`test_assistant.py`, `test_tools.py`, `test_speech.py`, `test_speech_transition.py`, `test_microphone_format.py`, etc.).
+- **`tests/`**: Full pytest coverage (`test_assistant.py`, `test_intelligence_layer.py`, `test_llm.py`, `test_speech.py`, `test_speech_transition.py`, `test_microphone_format.py`, etc.).
 
 ---
 
 ## 🏁 Completed Capabilities
 
-- **Unified CLI shell & cascading configurations**: Fully asynchronous terminal UI supporting configuration displays and SIGINT handling.
-- **Offline Echo-Compensated Audio Pipeline**: Integrated VAD and whisper transcription with audio hardware simulators and neural speech synthesis via **Kokoro**.
-- **Resilient Default OS Microphone Integration**: Targets virtual ALSA `"default"` device using `"float32"` natively, performing automatic hardware rate resampling and translation to mono 16-bit PCM.
-- **VAD-Gated Wake-Word State Machine**: Resolved logic reversal in `SpeechManager` `WAKING` state so that voice activity (`recent_activity_count > 0`) triggers rolling wake-buffer transcription checks rather than suppressing them.
-- **Instant Non-Blocking Wake-Word Transition**: Optimized state machine to instantly enter `LISTENING` mode upon wake-word detection ("Jarvis") without blocking audio capture on speaker playback.
-- **STT Signal Diagnostics & Debug WAV Dump**: Implemented diagnostic logging in `speech/recognizer.py` calculating PCM signal stats (len_bytes, shape, dtype, duration, min, max, RMS, peak) and writing post-wake audio buffers to `/tmp/jarvis-debug-command.wav`.
-- **Asynchronous LLM Client**: Non-blocking `OllamaClient` supporting asynchronous generation, streaming, and offline-failback mechanisms.
-- **Episodic JSON Memory**: Automated history loading, context windowing, serialization, and context injection.
-- **Dynamic Local Tool Calling**: Extensible `ToolRegistry` with pattern matching for custom bracket-enclosed tags (`DateTimeTool`, `SystemStatusTool`).
+- **Phase 1: Foundation**: Unified CLI shell (`main.py`), cascading YAML/environment settings, dual logging, and SIGINT graceful shutdown handling.
+- **Phase 2: Core Intelligence & LLM Orchestration**:
+  - Implemented `JarvisCore` (`app/core.py`) as the dedicated intelligence orchestrator between speech recognition and speech synthesis.
+  - Maintains bounded conversation context memory with configurable `max_context_length` to prevent memory overflow.
+  - Formats context prompts with explicit JARVIS system persona rules (short, concise, natural spoken responses, no markdown/verbose fluff).
+  - Queries local Ollama model asynchronously without blocking event loops.
+  - Traps all LLM failures (timeouts, network errors, malformed/empty responses) and returns short spoken fallback responses.
+  - Tracks and logs received commands, request start/completion metrics, latency, failures, and generated responses.
+  - Integrated directly into `SpeechManager` voice callbacks for the complete runtime execution path: **Wake Word → Listen → Transcribe → LLM → Synthesize → Play**.
 
 ---
 
-## ✅ Runtime Verification & Fixes
+## ✅ Runtime Verification & Diagnostics
 
-### **Wake-Word State Machine Logic Fix**:
-- **Root Cause Identified**: In `speech/manager.py`, wake-word candidate transcription was gated by `recent_activity_count == 0`, which required silence before checking for "Jarvis". This inverted VAD logic because saying "Jarvis" produced voice activity (`recent_activity_count > 0`), causing wake-word detection to be skipped.
-- **Behavioral Fix**: Corrected condition to `recent_activity_count > 0`, ensuring that voice activity triggers wake-word transcription. Implemented a sliding window buffer (`del rolling_wake_buffer[:10]`) so rolling audio is checked continuously without transcribing pure silence. Added clear logging: `logger.info("Wake word candidate text: '%s' (Confidence: %.2f)", transcription.text, transcription.confidence)`.
-
-### **End-to-End Test Results**:
-1. **Wake Word Detection**: Successfully detected `"Jarvis"` during voice activity.
-2. **Console UI Indicator**: Printed `🎙️ [Wake Word] 'Jarvis' detected! Listening...`
-3. **Command Capture**: Captures post-wake audio and yields exact Whisper transcript `"Hello Jarvis"`.
-4. **Orchestrator Routing**: Transcript reaches `JarvisAssistant` and queries local Ollama model.
-5. **LLM Synthesis & Speech Output**: Response generated by LLM is synthesized and spoken aloud by Kokoro.
+- Verified full intelligence layer test coverage (`tests/test_intelligence_layer.py`) testing normal completions, empty user inputs, LLM timeout fallbacks, network errors, empty responses, and context bounding limits.
+- Validated end-to-end voice loop integration via `JarvisAssistant` and `SpeechManager`.
 
 ---
 
 ## 🔮 Remaining Priorities & Next Steps
 
-1. **Phase 6: Custom Plugins & External Web APIs** (e.g., local home automation, offline web scraper, or open weather tools).
-2. **Phase 7: Modular Graphical User Interface** (e.g., standard text/voice UI dashboard or rich web front-end client).
+1. **Phase 3: Extended Tool Calling & System Automation** (e.g. enhanced system diagnostics, local file searching, terminal actions).
+2. **Phase 4: Memory Persistence & Knowledge Graphs**.
+3. **Phase 5: Graphical User Interface & Web Dashboard**.
 
 ---
 

@@ -20,6 +20,7 @@ from llm.ollama import OllamaClient
 from memory.local_json import LocalJSONMemory
 from tools.registry import ToolRegistry
 from tools.system_tools import DateTimeTool, SystemStatusTool
+from app.core import JarvisCore
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,10 @@ class JarvisAssistant:
         self.tool_registry.register_tool(DateTimeTool())
         self.tool_registry.register_tool(SystemStatusTool())
 
+        # Initialize JARVIS Core Intelligence Orchestrator
+        logger.info("Initializing JARVIS Core Intelligence Layer...")
+        self.jarvis_core: JarvisCore = JarvisCore(settings=self.settings, llm_client=self.llm_client)
+
         # Initialize the Speech Manager
         logger.info("Initializing Jarvis Core Speech subsystem...")
         self.speech_manager: SpeechManager = SpeechManager(settings=settings)
@@ -66,7 +71,7 @@ class JarvisAssistant:
         # Register conversational Speech responder callback: Speech -> LLM -> TTS
         async def voice_test_callback(prompt: str) -> str:
             self.console.print(f"\n[bold green]🎙️  [Voice Interaction] Transcribed:[/bold green] [italic yellow]'{prompt}'[/italic yellow]")
-            response = await self.process_text_input(prompt)
+            response = await self.jarvis_core.respond(prompt)
             self.console.print(f"[bold blue]🎙️  [Voice Interaction] Assistant response:[/bold blue] [italic white]\"{response}\"[/italic white]\n")
             return response
 
@@ -74,8 +79,7 @@ class JarvisAssistant:
 
     async def process_text_input(self, prompt: str) -> str:
         """
-        Processes a user text prompt through memory retrieval, tool parsing/execution,
-        and LLM response generation.
+        Processes a user text prompt through the dedicated JarvisCore intelligence orchestrator.
 
         Args:
             prompt: User text query.
@@ -83,77 +87,7 @@ class JarvisAssistant:
         Returns:
             str: Assistant response.
         """
-        # 1. Retrieve conversation context
-        try:
-            history_turns = await self.memory.retrieve("", limit=4)
-            context_str = ""
-            if history_turns:
-                context_str = "Recent conversation context:\n"
-                for turn in history_turns:
-                    role = turn.get("metadata", {}).get("role", "user").upper()
-                    content = turn.get("content", "")
-                    context_str += f"{role}: {content}\n"
-                context_str += "\n"
-        except Exception as e:
-            logger.error("Failed to retrieve conversation history: %s", e)
-            context_str = ""
-
-        # 2. Build full prompt and tools description
-        full_prompt = f"{context_str}Current User Prompt: {prompt}"
-        tools_description = self.tool_registry.get_tools_prompt_description()
-        system_prompt = (
-            "You are JARVIS, a helpful, polite, and extremely concise local AI assistant. "
-            "Keep responses under 2-3 short sentences.\n\n"
-            f"{tools_description}"
-        )
-
-        # 3. First LLM query
-        try:
-            response = await self.llm_client.generate(full_prompt, system_prompt=system_prompt)
-        except Exception as e:
-            logger.warning("Local LLM primary query failed: %s. Falling back to simple answer.", e)
-            return f"I am currently disconnected from my local language model, but I heard you say: {prompt}"
-
-        # 4. Check for tool invocation
-        tool_call = self.tool_registry.parse_tool_call(response)
-        if tool_call:
-            tool_name, tool_args = tool_call
-            self.console.print(f"[dim][*] Tool call detected: {tool_name}({tool_args}). Executing...[/dim]")
-
-            # Execute tool
-            tool_result = await self.tool_registry.execute_tool(tool_name, **tool_args)
-            self.console.print(f"[dim][*] Tool execution completed. Result: {tool_result}[/dim]")
-
-            # Construct follow-up turn
-            follow_up_prompt = (
-                f"{context_str}"
-                f"User original query: {prompt}\n\n"
-                f"Real-time system tool execution result for '{tool_name}':\n"
-                f"{json.dumps(tool_result, indent=2) if isinstance(tool_result, dict) else str(tool_result)}\n\n"
-                "Please construct a friendly, conversational final response incorporating this live system data. "
-                "Keep the reply precise, natural, and under 2-3 short sentences."
-            )
-
-            follow_up_system = (
-                "You are JARVIS, a helpful, polite, and extremely concise local AI assistant. "
-                "Always use the provided real-time system tool execution data to accurately answer the user's query."
-            )
-
-            # Second LLM query to synthesize tool output
-            try:
-                response = await self.llm_client.generate(follow_up_prompt, system_prompt=follow_up_system)
-            except Exception as e:
-                logger.warning("Local LLM tool synthesis query failed: %s. Using raw tool response.", e)
-                response = f"I executed {tool_name} and received the following status: {tool_result}"
-
-        # 5. Store the successful conversation turn in memory
-        try:
-            await self.memory.store(prompt, {"role": "user"})
-            await self.memory.store(response, {"role": "assistant"})
-        except Exception as e:
-            logger.error("Failed to store conversation turn in memory: %s", e)
-
-        return response
+        return await self.jarvis_core.respond(prompt)
 
     def display_banner(self) -> None:
         """Displays a beautiful, production-grade ASCII banner for JARVIS."""

@@ -72,37 +72,19 @@ async def test_run_loop_with_immediate_exit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_text_input_with_tool_calling() -> None:
+async def test_process_text_input_delegates_to_jarvis_core() -> None:
     """
-    Verifies that process_text_input detects a tool call, executes it, and
-    provides a final summarized answer from the LLM.
+    Verifies that assistant.process_text_input delegates directly to jarvis_core.respond.
     """
     settings = load_settings()
     settings.microphone.use_simulator = True
     settings.piper.use_simulator = True
     assistant = JarvisAssistant(settings=settings)
 
-    # Mock OllamaClient.generate:
-    # 1. First call outputs a tool tag.
-    # 2. Second call outputs a friendly summarized string using the tool data.
-    first_response = "[TOOL: get_current_datetime]"
-    second_response = "The current system time is Sunday, April 13, 2025, 03:00 PM."
+    with mock.patch.object(assistant.jarvis_core, "respond", new_callable=mock.AsyncMock) as mock_respond:
+        mock_respond.return_value = "Hello from JarvisCore"
 
-    with mock.patch.object(assistant.llm_client, "generate") as mock_generate:
-        mock_generate.side_effect = [first_response, second_response]
+        result = await assistant.process_text_input("Hello")
 
-        # Execute text processing
-        result = await assistant.process_text_input("What time is it?")
-
-        # Check call count and result
-        assert mock_generate.call_count == 2
-        assert result == second_response
-
-        # Check that the first query includes tool descriptions
-        first_call_args = mock_generate.call_args_list[0]
-        assert "get_current_datetime" in first_call_args[1]["system_prompt"]
-
-        # Check that the second query includes the raw tool result
-        second_call_args = mock_generate.call_args_list[1]
-        assert "friendly_text" in second_call_args[0][0]
-        assert "User original query: What time is it?" in second_call_args[0][0]
+        assert result == "Hello from JarvisCore"
+        mock_respond.assert_called_once_with("Hello")
