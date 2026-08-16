@@ -1,40 +1,70 @@
 """
-JARVIS Speech Orchestration Manager.
+JARVIS Speech Orchestration Manager Module.
 
 Coordinates MicrophoneManager, WakeWordEngine, FasterWhisperRecognizer, and PiperSynthesizer/KokoroSynthesizer
-into a unified, stateful, and reactive speech interaction layer.
+into a formal, deterministic, reactive state machine for natural voice interaction.
 """
 
 import asyncio
+from enum import Enum
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Awaitable
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from rich.console import Console
 from config.config import Settings
 from speech.microphone import MicrophoneManager
 from speech.recognizer import FasterWhisperRecognizer
-from speech.synthesizer import PiperSynthesizer, KokoroSynthesizer
+from speech.synthesizer import KokoroSynthesizer, PiperSynthesizer
 from speech.wakeword import WakeWordEngine
 
 logger = logging.getLogger(__name__)
 
 
+class SpeechState(Enum):
+    """
+    Formal state definitions for the JARVIS voice interaction state machine.
+    """
+    WAKING = "WAKING"
+    LISTENING = "LISTENING"
+    TRANSCRIBING = "TRANSCRIBING"
+    THINKING = "THINKING"
+    SPEAKING = "SPEAKING"
+    INTERRUPTED = "INTERRUPTED"
+    ERROR = "ERROR"
+    SHUTDOWN = "SHUTDOWN"
+
+
 class SpeechManager:
     """
-    Central manager that orchestrates JARVIS's voice-in and voice-out loop.
-    Implements a robust state machine for wake word spotting, VAD-based recording,
-    Whisper transcription, and local TTS synthesis.
+    Central manager that orchestrates JARVIS's voice interaction loop.
+    Implements a formal state machine for wake-word spotting, VAD-based recording,
+    Whisper transcription, LLM orchestration, Kokoro TTS synthesis, and interruption handling.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        listening_timeout: float = 5.0,
+        maximum_command_duration: float = 5.0,
+        interruption_sensitivity: int = 2
+    ) -> None:
         """
         Initializes the SpeechManager and its coordinated components.
 
         Args:
             settings: Loaded global system configuration settings.
+            listening_timeout: Idle duration in seconds allowed before returning to WAKING.
+            maximum_command_duration: Maximum duration in seconds allowed for a single command.
+            interruption_sensitivity: Number of consecutive speech frames required to trigger interruption.
         """
         self.settings: Settings = settings
+        self.listening_timeout: float = listening_timeout
+        self.maximum_command_duration: float = maximum_command_duration
+        self.interruption_sensitivity: int = interruption_sensitivity
+
+        # State tracking
+        self.state: SpeechState = SpeechState.WAKING
 
         # 1. Initialize Microphone Manager
         self.microphone = MicrophoneManager(
@@ -64,7 +94,6 @@ class SpeechManager:
         )
 
         # 4. Initialize TTS Synthesizer based on provider
-        # Defaults to Kokoro unless Piper is explicitly configured
         tts_provider = settings.speech.tts_provider.lower()
         if tts_provider == "piper":
             self.synthesizer = PiperSynthesizer(
@@ -84,14 +113,26 @@ class SpeechManager:
 
         self.console = Console()
 
-        # State flags
+        # State flags and task tracking
         self.is_running: bool = False
         self._loop_task: Optional[asyncio.Task[None]] = None
+        self._active_speech_task: Optional[asyncio.Task[None]] = None
 
-        # User defined speech callback (async func taking user prompt, returning response)
+        # User defined speech callback
         self._speech_callback: Optional[Callable[[str], Awaitable[str]]] = None
 
         logger.info("SpeechManager successfully initialized with backend: %s", self.synthesizer.__class__.__name__)
+
+    def transition_to(self, new_state: SpeechState) -> None:
+        """
+        Transitions the state machine to a new state with explicit logging.
+
+        Args:
+            new_state: Target SpeechState enum.
+        """
+        if self.state != new_state:
+            logger.info("Speech State Transition: %s -> %s", self.state.value, new_state.value)
+            self.state = new_state
 
     def register_speech_callback(self, callback: Callable[[str], Awaitable[str]]) -> None:
         """
@@ -105,26 +146,36 @@ class SpeechManager:
 
     async def start(self) -> None:
         """
-        Starts the background speech orchestration loop.
+        Starts the background speech orchestration state machine loop.
         """
         if self.is_running:
             logger.warning("SpeechManager is already running.")
             return
 
         self.is_running = True
+        self.transition_to(SpeechState.WAKING)
         self.microphone.start_stream()
         self._loop_task = asyncio.create_task(self._run_orchestration_loop())
-        logger.info("SpeechManager started background audio-loop.")
+        logger.info("SpeechManager started background audio loop.")
 
     async def stop(self) -> None:
         """
-        Stops the speech manager, releases microphone stream, and halts background loops.
+        Stops the speech manager, releases microphone stream, cancels active tasks, and halts loop.
         """
         if not self.is_running:
             return
 
-        logger.info("Stopping SpeechManager subsystems...")
+        logger.info("Stopping SpeechManager subsystems and cancelling active tasks...")
         self.is_running = False
+        self.transition_to(SpeechState.SHUTDOWN)
+
+        if self._active_speech_task and not self._active_speech_task.done():
+            self._active_speech_task.cancel()
+            try:
+                await self._active_speech_task
+            except asyncio.CancelledError:
+                pass
+            self._active_speech_task = None
 
         if self._loop_task:
             self._loop_task.cancel()
@@ -140,12 +191,9 @@ class SpeechManager:
 
     async def _run_orchestration_loop(self) -> None:
         """
-        Primary asynchronous loop running the speech state machine.
+        Primary asynchronous loop running the formal state machine.
         """
         logger.info("Entering SpeechManager orchestration state loop.")
-
-        # States: "WAKING" (waiting for Jarvis), "LISTENING" (recording active prompt)
-        current_state = "WAKING"
 
         # Audio accumulator buffers
         rolling_wake_buffer: List[bytes] = []
@@ -157,150 +205,194 @@ class SpeechManager:
         speech_start_time: Optional[float] = None
         listening_entry_time: Optional[float] = None
 
-        # State tracking for wake activity gating
+        # Interruption tracking counter
+        interruption_consecutive_frames = 0
         recent_activity_count = 0
 
         while self.is_running:
             try:
-                # Read 30ms of audio frame from the microphone
+                # Read 30ms audio frame from microphone stream
                 chunk = await self.microphone.read_chunk()
-
-                # Run voice activity check on chunk
                 is_voice = self.recognizer.is_speech(chunk)
 
-                if current_state == "WAKING":
-                    # --- STATE 1: Gated Wake Word Detection ---
+                # =============================================================
+                # STATE: WAKING
+                # =============================================================
+                if self.state == SpeechState.WAKING:
                     rolling_wake_buffer.append(chunk)
 
                     if is_voice:
-                        recent_activity_count = 10  # Hold active voice state for ~300ms
+                        recent_activity_count = 10
                     elif recent_activity_count > 0:
                         recent_activity_count -= 1
 
-                    # Keep rolling wake buffer bounded at maximum ~1.5s (50 frames of 30ms)
                     if len(rolling_wake_buffer) > 50:
                         rolling_wake_buffer.pop(0)
 
-                    # Transcribe when enough audio is accumulated (~1.0s, 33 frames) AND voice activity is active
+                    # Transcribe candidates when speech is present in rolling buffer
                     if len(rolling_wake_buffer) >= 33 and recent_activity_count > 0:
                         full_audio = b"".join(rolling_wake_buffer)
-
-                        # Slide buffer by 10 frames (~300ms) for continuous sliding window
                         del rolling_wake_buffer[:10]
 
-                        # Fast transcribe in background
                         transcription = await self.recognizer.transcribe_audio(full_audio)
-
                         logger.info("Wake word candidate text: '%s' (Confidence: %.2f)", transcription.text, transcription.confidence)
 
-                        # Process wake word check
                         if self.wakeword.detect_in_text(transcription.text, transcription.confidence):
-                            logger.info("Wake word triggered by text '%s'. Transitioning to LISTENING state.", transcription.text)
+                            logger.info("Wake word triggered by text '%s'.", transcription.text)
                             self.console.print("[bold yellow]🎙️  [Wake Word] 'Jarvis' detected! Listening...[/bold yellow]")
 
-                            # Flush microphone queue and audio buffers to discard wake audio frames and stale data
+                            # Single-point queue flush and transition
                             self.microphone.clear_queue()
                             rolling_wake_buffer.clear()
                             active_speech_buffer.clear()
                             recent_activity_count = 0
 
-                            # Transition state directly
-                            current_state = "LISTENING"
+                            self.transition_to(SpeechState.LISTENING)
                             silence_start_time = None
                             speech_started = False
                             speech_start_time = None
                             listening_entry_time = time.time()
 
-                elif current_state == "LISTENING":
-                    # --- STATE 2: User Voice Activity Recording ---
+                # =============================================================
+                # STATE: LISTENING
+                # =============================================================
+                elif self.state == SpeechState.LISTENING:
                     active_speech_buffer.append(chunk)
 
                     if is_voice:
-                        # User is speaking
                         if not speech_started:
                             logger.info("Active user speech started.")
                             speech_started = True
                             speech_start_time = time.time()
-                        silence_start_time = None  # Reset silence timer
+                        silence_start_time = None
                     else:
-                        # Silence detected
                         if speech_started:
                             if silence_start_time is None:
                                 silence_start_time = time.time()
                             else:
                                 elapsed_silence = time.time() - silence_start_time
-                                elapsed_speech = time.time() - speech_start_time
+                                elapsed_speech = time.time() - speech_start_time if speech_start_time else 0.0
 
-                                # Terminate capture if silence interval exceeded OR maximum command duration (5.0s) reached
-                                if elapsed_silence >= self.recognizer.silence_timeout or elapsed_speech >= 5.0:
+                                # Stop boundary or max command duration reached
+                                if elapsed_silence >= self.recognizer.silence_timeout or elapsed_speech >= self.maximum_command_duration:
                                     logger.info("VAD: Stop boundary reached. Silence: %.2fs, Speech: %.2fs", elapsed_silence, elapsed_speech)
 
-                                    # Gating: check minimum speech duration
                                     if elapsed_speech >= self.recognizer.min_speech_duration:
-                                        logger.info("Valid speech block captured. Starting transcription.")
-                                        current_state = "TRANSCRIBING"
-
-                                        # Process transcription
+                                        self.transition_to(SpeechState.TRANSCRIBING)
                                         full_audio_bytes = b"".join(active_speech_buffer)
-                                        trans_result = await self.recognizer.transcribe_audio(full_audio_bytes)
+                                        active_speech_buffer.clear()
+                                        speech_started = False
 
-                                        if trans_result.text.strip():
-                                            self.console.print(f"[bold green]User prompt transcribed:[/bold green] [italic]'{trans_result.text}'[/italic]")
-
-                                            # Invoke main prompt responder callback
-                                            if self._speech_callback:
-                                                response_text = await self._speech_callback(trans_result.text)
-                                                if response_text:
-                                                    await self.synthesizer.speak(response_text)
-                                                    while self.synthesizer.is_speaking:
-                                                        await asyncio.sleep(0.05)
-                                                    self.microphone.clear_queue()
-                                        else:
-                                            logger.info("Transcribed audio yielded empty text. Discarding block.")
+                                        # Process transcription & intelligence pipeline
+                                        await self._process_command_pipeline(full_audio_bytes)
                                     else:
-                                        logger.info("Captured speech segment was too short (%.2fs < %.2fs). Discarding.", elapsed_speech, self.recognizer.min_speech_duration)
-
-                                    # Return to Waking state
-                                    current_state = "WAKING"
-                                    active_speech_buffer.clear()
-                                    speech_started = False
-
+                                        logger.info("Captured speech too short (%.2fs < %.2fs). Discarding.", elapsed_speech, self.recognizer.min_speech_duration)
+                                        self.transition_to(SpeechState.WAKING)
+                                        active_speech_buffer.clear()
+                                        speech_started = False
                         else:
-                            # If we haven't even started speaking, keep buffer size bounded to preserve pre-speech context (1.0s)
+                            # Bound pre-speech context buffer (~1s)
                             if len(active_speech_buffer) > 33:
                                 active_speech_buffer.pop(0)
 
-                    # Strict Safety Net: enforce maximum recording limit of 5.0 seconds even if VAD is continuously triggered
-                    if speech_started and (time.time() - speech_start_time) >= 5.0:
-                        logger.info("VAD: Maximum recording duration (5.0s) reached. Terminating recording.")
-                        current_state = "TRANSCRIBING"
-
+                    # Max command duration safety limit
+                    if speech_started and speech_start_time and (time.time() - speech_start_time) >= self.maximum_command_duration:
+                        logger.info("VAD: Maximum recording duration reached. Terminating recording.")
+                        self.transition_to(SpeechState.TRANSCRIBING)
                         full_audio_bytes = b"".join(active_speech_buffer)
-                        trans_result = await self.recognizer.transcribe_audio(full_audio_bytes)
-
-                        if trans_result.text.strip():
-                            self.console.print(f"[bold green]User prompt transcribed:[/bold green] [italic]'{trans_result.text}'[/italic]")
-                            if self._speech_callback:
-                                response_text = await self._speech_callback(trans_result.text)
-                                if response_text:
-                                    await self.synthesizer.speak(response_text)
-                                    while self.synthesizer.is_speaking:
-                                        await asyncio.sleep(0.05)
-                                    self.microphone.clear_queue()
-
-                        current_state = "WAKING"
                         active_speech_buffer.clear()
                         speech_started = False
 
-                    # Idle Safety Net: if the user does not speak at all within 5 seconds of entering LISTENING state, timeout and return to WAKING
-                    if not speech_started and listening_entry_time and (time.time() - listening_entry_time) >= 5.0:
+                        await self._process_command_pipeline(full_audio_bytes)
+
+                    # Listening idle timeout limit
+                    if not speech_started and listening_entry_time and (time.time() - listening_entry_time) >= self.listening_timeout:
                         logger.info("VAD: Listening state idle timeout reached. Returning to WAKING.")
-                        current_state = "WAKING"
+                        self.transition_to(SpeechState.WAKING)
                         active_speech_buffer.clear()
                         speech_started = False
+
+                # =============================================================
+                # STATE: SPEAKING (With Interruption Handling)
+                # =============================================================
+                elif self.state == SpeechState.SPEAKING:
+                    if is_voice:
+                        interruption_consecutive_frames += 1
+                        if interruption_consecutive_frames >= self.interruption_sensitivity:
+                            logger.info("User interruption detected (%d speech frames). Interrupting TTS playback...", interruption_consecutive_frames)
+                            self.transition_to(SpeechState.INTERRUPTED)
+
+                            # Execute Interruption Sequence
+                            self.synthesizer.stop()
+                            self.microphone.clear_queue()
+                            active_speech_buffer.clear()
+                            interruption_consecutive_frames = 0
+
+                            # Immediately capture new user command
+                            self.transition_to(SpeechState.LISTENING)
+                            silence_start_time = None
+                            speech_started = False
+                            speech_start_time = None
+                            listening_entry_time = time.time()
+                    else:
+                        interruption_consecutive_frames = 0
+
+                    # Check if speech playback completed
+                    if not self.synthesizer.is_speaking and self.state == SpeechState.SPEAKING:
+                        self.microphone.clear_queue()
+                        self.transition_to(SpeechState.WAKING)
+
+                # =============================================================
+                # STATE: ERROR RECOVERY
+                # =============================================================
+                elif self.state == SpeechState.ERROR:
+                    logger.warning("SpeechManager recovering from error state. Resetting queues...")
+                    self.microphone.clear_queue()
+                    rolling_wake_buffer.clear()
+                    active_speech_buffer.clear()
+                    await asyncio.sleep(0.1)
+                    self.transition_to(SpeechState.WAKING)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.exception("Error in SpeechManager execution loop: %s", e)
-                await asyncio.sleep(0.1)  # Prevent tight error looping
+                self.transition_to(SpeechState.ERROR)
+
+    async def _process_command_pipeline(self, audio_bytes: bytes) -> None:
+        """
+        Executes TRANSCRIBING -> THINKING -> SPEAKING pipeline sequentially.
+
+        Args:
+            audio_bytes: Captured PCM16 mono command audio bytes.
+        """
+        try:
+            # 1. TRANSCRIBING State
+            trans_result = await self.recognizer.transcribe_audio(audio_bytes)
+            clean_text = trans_result.text.strip()
+
+            if not clean_text:
+                logger.info("Transcribed audio yielded empty text. Discarding block.")
+                self.transition_to(SpeechState.WAKING)
+                return
+
+            self.console.print(f"[bold green]User prompt transcribed:[/bold green] [italic]'{clean_text}'[/italic]")
+
+            # 2. THINKING State
+            self.transition_to(SpeechState.THINKING)
+            response_text = ""
+            if self._speech_callback:
+                response_text = await self._speech_callback(clean_text)
+
+            if not response_text or not response_text.strip():
+                logger.info("Intelligence layer returned empty response.")
+                self.transition_to(SpeechState.WAKING)
+                return
+
+            # 3. SPEAKING State
+            self.transition_to(SpeechState.SPEAKING)
+            await self.synthesizer.speak(response_text)
+
+        except Exception as e:
+            logger.exception("Error in command pipeline processing: %s", e)
+            self.transition_to(SpeechState.ERROR)

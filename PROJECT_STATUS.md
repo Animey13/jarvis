@@ -21,8 +21,8 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
                          ▼              ▼              ▼
 ┌───────────────────────────┐ ┌────────────┐ ┌───────────────────┐
 │       SpeechManager       │ │ JarvisCore │ │   MemoryManager   │
-│  (webrtcvad, sounddevice, │ │ (app/core) │ │ (Short/Persistent)│
-│   faster-whisper, Kokoro) │ └─────┬──────┘ └───────────────────┘
+│   (Formal State Machine:  │ │ (app/core) │ │ (Short/Persistent)│
+│  WAKING, LISTENING, etc.) │ └─────┬──────┘ └───────────────────┘
 └───────────────────────────┘       │
                                     ▼
                              ┌──────────────┐
@@ -42,11 +42,11 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
 
 - **`app/`**: Core lifecycle controller, intelligence orchestrator, and console formatting (`assistant.py`, `core.py`, `logging_config.py`).
 - **`config/`**: Cascading YAML and environment-overridden configuration manager (`config.py`, `settings.yaml`).
-- **`speech/`**: Speech recognition, wake-word spotting, sounddevice stream captures, and neural speech synthesis (`interfaces.py`, `microphone.py`, `recognizer.py`, `wakeword.py`, `synthesizer.py`, `manager.py`).
+- **`speech/`**: Speech recognition, wake-word spotting, sounddevice stream captures, state machine orchestration, and neural speech synthesis (`interfaces.py`, `microphone.py`, `recognizer.py`, `wakeword.py`, `synthesizer.py`, `manager.py`).
 - **`llm/`**: Async client wrapper for local language models (`base.py`, `ollama.py`).
 - **`memory/`**: Short-term and persistent memory management layer (`base.py`, `local_json.py`, `manager.py`).
 - **`tools/`**: Local extensible OS, status, and memory tools registry (`base.py`, `registry.py`, `system_tools.py`).
-- **`tests/`**: Full pytest coverage (`test_assistant.py`, `test_intelligence_layer.py`, `test_memory_system.py`, `test_tools.py`, `test_llm.py`, `test_speech.py`, `test_speech_transition.py`, `test_microphone_format.py`, etc.).
+- **`tests/`**: Full pytest coverage (`test_assistant.py`, `test_intelligence_layer.py`, `test_memory_system.py`, `test_state_machine.py`, `test_tools.py`, `test_llm.py`, `test_speech.py`, `test_speech_transition.py`, `test_microphone_format.py`, etc.).
 
 ---
 
@@ -66,28 +66,32 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
   - Implemented `MemoryManager` (`memory/manager.py`) coordinating Short-Term Memory (bounded in-session conversation turns) and Persistent Memory (disk-backed JSON fact store at `logs/persistent_memory.json`).
   - Supports persistent memory operations: `remember(key, value)`, `retrieve(query, limit)`, `forget(key)`, `list_memory()`, and `clear_memory()`.
   - Intentional memory creation surviving system reloads with timestamping, metadata, and automatic recovery from corrupted JSON files without crashing JARVIS.
-  - Added explicit memory tools in `tools/system_tools.py`: `RememberTool` (`remember_fact`), `QueryMemoryTool` (`query_memory`), and `ForgetMemoryTool` (`forget_fact`).
-  - Integrated persistent memory retrieval into `JarvisCore` (`app/core.py`), injecting bounded relevant memories (top 3) into LLM prompts without dumping the entire memory store.
+  - Explicit memory tools in `tools/system_tools.py`: `RememberTool`, `QueryMemoryTool`, `ForgetMemoryTool`.
+- **Phase 5: Natural Voice Interaction**:
+  - Formalized state machine in `speech/manager.py` using `SpeechState` Enum (`WAKING`, `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`, `INTERRUPTED`, `ERROR`, `SHUTDOWN`).
+  - Deterministic state transitions with explicit logging (`transition_to`).
+  - Mid-speech interruption handling: detecting voice activity during TTS playback transitions `SPEAKING -> INTERRUPTED -> LISTENING`, halts playback, flushes audio queues, and captures new commands.
+  - Configurable timeouts (`listening_timeout`, `silence_timeout`, `maximum_command_duration`, `interruption_sensitivity`).
+  - Shutdown sequence cancels microphone capture, VAD loops, STT transcription, LLM generation, and TTS tasks cleanly without orphan processes.
 
 ---
 
 ## ✅ Runtime Verification & Test Status
 
-- 57 passing automated unit and integration tests across 11 test modules covering:
-  - Storing, retrieving, deleting, and listing persistent memories
-  - Persistence across instance reloads and disk reads
-  - Corrupted JSON file recovery and backup
-  - Bounded retrieval limits
-  - Explicit memory tools execution
-  - `JarvisCore` prompt memory injection
+- 62 passing automated unit and integration tests across 12 test modules covering:
+  - Formal state transitions and state transition logging
+  - Interruption handling (`SPEAKING -> INTERRUPTED -> LISTENING`)
+  - Queue flushing and stale frame prevention
+  - Shutdown task cancellation and clean resource teardown
+  - Memory persistence, tools, and core intelligence orchestration
 - Validated end-to-end voice loop integration via `JarvisAssistant` and `SpeechManager`.
 
 ---
 
 ## 🔮 Remaining Priorities & Next Steps
 
-1. **Phase 5: Custom Plugins & External Web APIs**.
-2. **Phase 6: Modular Graphical User Interface & Web Dashboard**.
+1. **Phase 6: Custom Plugins & External Web APIs**.
+2. **Phase 7: Modular Graphical User Interface & Web Dashboard**.
 
 ---
 
