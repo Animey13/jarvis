@@ -7,6 +7,22 @@ and APIs that can be invoked dynamically by the agent.
 
 from tools.base import BaseTool
 from tools.registry import ToolRegistry
-from tools.system_tools import DateTimeTool, SystemStatusTool
+from tools.system_tools import (
+    DateTimeTool,
+    CalculatorTool,
+    SystemStatusTool,
+    ListFilesTool,
+    ReadFileTool,
+    RestrictedCommandTool
+)
 
-__all__ = ["BaseTool", "ToolRegistry", "DateTimeTool", "SystemStatusTool"]
+__all__ = [
+    "BaseTool",
+    "ToolRegistry",
+    "DateTimeTool",
+    "CalculatorTool",
+    "SystemStatusTool",
+    "ListFilesTool",
+    "ReadFileTool",
+    "RestrictedCommandTool"
+]

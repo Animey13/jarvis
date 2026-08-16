@@ -2,17 +2,27 @@
 JARVIS Core Intelligence Layer Module.
 
 Provides the primary intelligence orchestrator (`JarvisCore`) that manages
-conversation context memory, system prompt rules, asynchronous LLM execution,
-latency tracking, and graceful fallback handling for JARVIS.
+conversation context memory, system prompt rules, tool execution decision-making,
+asynchronous LLM execution, latency tracking, and graceful fallback handling for JARVIS.
 """
 
+import json
 import logging
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from config.config import Settings
 from llm.base import BaseLLMClient
 from llm.ollama import OllamaClient
+from tools.registry import ToolRegistry
+from tools.system_tools import (
+    CalculatorTool,
+    DateTimeTool,
+    ListFilesTool,
+    ReadFileTool,
+    RestrictedCommandTool,
+    SystemStatusTool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +58,18 @@ class ConversationTurn:
 class JarvisCore:
     """
     Dedicated JARVIS Core Intelligence Orchestrator.
-    Manages conversational context, system prompts, LLM invocations,
-    latency tracking, and fail-safe fallbacks.
+    Manages conversational context, system prompts, tool execution decisions,
+    LLM invocations, latency tracking, and fail-safe fallbacks.
     """
 
     def __init__(
         self,
         settings: Settings,
         llm_client: Optional[BaseLLMClient] = None,
+        tool_registry: Optional[ToolRegistry] = None,
         max_context_length: int = 10,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-        fallback_response: str = DEFAULT_FALLBACK_RESPONSE
+        fallback_response: str = DEFAULT_FALLBACK_RESPONSE,
     ) -> None:
         """
         Initializes the JARVIS Core Intelligence orchestrator.
@@ -66,6 +77,7 @@ class JarvisCore:
         Args:
             settings: Loaded system configuration settings.
             llm_client: Optional custom LLM client instance; defaults to OllamaClient using settings.
+            tool_registry: Optional custom ToolRegistry instance; defaults to registering standard tools.
             max_context_length: Maximum number of conversation turns retained in memory.
             system_prompt: System prompt defining persona and behavioral rules.
             fallback_response: Spoken fallback text returned when LLM generation fails.
@@ -83,8 +95,20 @@ class JarvisCore:
             self.llm_client = OllamaClient(
                 model_name=self.settings.llm.model,
                 api_base=self.settings.llm.api_base,
-                timeout=self.settings.llm.timeout
+                timeout=self.settings.llm.timeout,
             )
+
+        if tool_registry is not None:
+            self.tool_registry: ToolRegistry = tool_registry
+        else:
+            logger.info("Initializing default ToolRegistry in JarvisCore...")
+            self.tool_registry = ToolRegistry()
+            self.tool_registry.register_tool(DateTimeTool())
+            self.tool_registry.register_tool(CalculatorTool())
+            self.tool_registry.register_tool(SystemStatusTool())
+            self.tool_registry.register_tool(ListFilesTool())
+            self.tool_registry.register_tool(ReadFileTool())
+            self.tool_registry.register_tool(RestrictedCommandTool())
 
     def add_turn(self, role: str, content: str) -> None:
         """
@@ -126,10 +150,21 @@ class JarvisCore:
         prompt_parts.append(f"USER: {user_text}")
         return "\n".join(prompt_parts)
 
+    def build_system_prompt(self) -> str:
+        """
+        Combines the base persona instructions with available tool descriptions.
+
+        Returns:
+            str: Full system prompt text.
+        """
+        tools_desc = self.tool_registry.get_tools_prompt_description()
+        return f"{self.system_prompt}\n\n{tools_desc}"
+
     async def respond(self, user_text: str) -> str:
         """
         Main public interface method: receives user text, queries LLM asynchronously,
-        updates context memory, logs metrics/latency, and returns response.
+        evaluates tool calls, executes tools, updates context memory, logs metrics/latency,
+        and returns final response.
 
         Args:
             user_text: Transcribed input text from user.
@@ -137,14 +172,15 @@ class JarvisCore:
         Returns:
             str: Generated natural language response or fallback message.
         """
-        if not user_text or not user_text.strip():
+        if not user_text or not str(user_text).strip():
             logger.warning("JarvisCore received empty user text input.")
             return "I didn't hear anything. How can I help you?"
 
-        clean_input = user_text.strip()
+        clean_input = str(user_text).strip()
         logger.info("JarvisCore received command: '%s'", clean_input)
 
         full_prompt = self.build_prompt(clean_input)
+        effective_system_prompt = self.build_system_prompt()
         start_time = time.time()
 
         logger.info(
@@ -152,13 +188,12 @@ class JarvisCore:
             self.settings.llm.provider,
             self.llm_client.model_name,
             self.llm_client.api_base,
-            self.llm_client.timeout
+            self.llm_client.timeout,
         )
 
         try:
             response_text = await self.llm_client.generate(
-                prompt=full_prompt,
-                system_prompt=self.system_prompt
+                prompt=full_prompt, system_prompt=effective_system_prompt
             )
             elapsed_time = time.time() - start_time
 
@@ -168,11 +203,39 @@ class JarvisCore:
 
             clean_response = response_text.strip()
             logger.info(
-                "LLM request completed successfully in %.2fs (~%d chars). Response: '%s'",
+                "LLM primary response generated in %.2fs (~%d chars): '%s'",
                 elapsed_time,
                 len(clean_response),
-                clean_response
+                clean_response,
             )
+
+            # Check for tool execution decision tag
+            tool_call = self.tool_registry.parse_tool_call(clean_response)
+            if tool_call:
+                tool_name, tool_args = tool_call
+                logger.info("Tool decision detected -> Name: '%s', Arguments: %s", tool_name, tool_args)
+
+                exec_res = await self.tool_registry.execute_tool(tool_name, **tool_args)
+
+                # Formulate follow-up synthesis turn for LLM
+                follow_up_prompt = (
+                    f"{full_prompt}\n\n"
+                    f"[Tool Execution Output for '{tool_name}']:\n"
+                    f"{json.dumps(exec_res, indent=2)}\n\n"
+                    "Please answer the user's original request naturally incorporating this real-time system output."
+                )
+
+                try:
+                    synth_start = time.time()
+                    clean_response = await self.llm_client.generate(
+                        prompt=follow_up_prompt, system_prompt=self.system_prompt
+                    )
+                    clean_response = clean_response.strip() if clean_response else str(exec_res)
+                    synth_elapsed = time.time() - synth_start
+                    logger.info("LLM synthesis completed in %.2fs: '%s'", synth_elapsed, clean_response)
+                except Exception as synth_err:
+                    logger.warning("Follow-up LLM tool synthesis failed: %s. Using raw tool output.", synth_err)
+                    clean_response = f"I executed {tool_name} and received: {exec_res}"
 
             # Store successful turn in memory
             self.add_turn("user", clean_input)

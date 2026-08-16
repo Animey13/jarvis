@@ -12,7 +12,7 @@ from typing import Any, Dict
 class BaseTool(ABC):
     """
     Abstract Base Class representing an executable system tool.
-    Any custom tool (e.g., file system operation, web search, weather check)
+    Any custom tool (e.g., file system operation, weather check, calculator)
     should inherit from this and register with the Tool Registry.
     """
 
@@ -38,6 +38,16 @@ class BaseTool(ABC):
             str: The tool description.
         """
         pass
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        """
+        Input schema detailing expected arguments and types.
+
+        Returns:
+            Dict[str, Any]: Map of argument names to expected type descriptions.
+        """
+        return {}
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> Any:
