@@ -31,10 +31,10 @@ async def test_normal_llm_response() -> None:
 
     assert response == "Hello! I am JARVIS, your assistant."
     assert len(core.history) == 2
-    assert core.history[0].role == "user"
-    assert core.history[0].content == "Hello JARVIS"
-    assert core.history[1].role == "assistant"
-    assert core.history[1].content == "Hello! I am JARVIS, your assistant."
+    assert core.history[0]["role"] == "user"
+    assert core.history[0]["content"] == "Hello JARVIS"
+    assert core.history[1]["role"] == "assistant"
+    assert core.history[1]["content"] == "Hello! I am JARVIS, your assistant."
 
 
 @pytest.mark.asyncio
@@ -138,10 +138,10 @@ async def test_context_handling_and_limits() -> None:
 
     # History size should be capped at max_context_length=4
     assert len(core.history) == 4
-    assert core.history[0].content == "Turn 2"
-    assert core.history[1].content == "Ack"
-    assert core.history[2].content == "Turn 3"
-    assert core.history[3].content == "Ack"
+    assert core.history[0]["content"] == "Turn 2"
+    assert core.history[1]["content"] == "Ack"
+    assert core.history[2]["content"] == "Turn 3"
+    assert core.history[3]["content"] == "Ack"
 
     # Verify that the generated prompt includes recent history
     prompt = core.build_prompt("Turn 4")

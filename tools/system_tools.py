@@ -8,6 +8,9 @@ Implements safe, modular system tools conforming to the BaseTool interface:
 - ListFilesTool: Safely lists files and directories in a requested path.
 - ReadFileTool: Safely reads text contents of files with size enforcement.
 - RestrictedCommandTool: Executes strictly allowlisted, non-shell OS commands safely.
+- RememberTool: Explicitly stores an intentional fact into persistent memory.
+- QueryMemoryTool: Queries stored persistent facts and memories.
+- ForgetMemoryTool: Deletes a stored fact from persistent memory.
 """
 
 import ast
@@ -18,7 +21,7 @@ import operator
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from tools.base import BaseTool
 
@@ -424,3 +427,128 @@ class RestrictedCommandTool(BaseTool):
             }
         except Exception as e:
             return {"command": command, "error": f"Failed to execute command: {e}"}
+
+
+class RememberTool(BaseTool):
+    """
+    Tool to explicitly store an intentional fact or preference into persistent memory.
+    """
+
+    def __init__(self, memory_manager: Optional[Any] = None) -> None:
+        self.memory_manager = memory_manager
+
+    @property
+    def name(self) -> str:
+        return "remember_fact"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Stores an intentional fact, instruction, or preference into persistent memory. "
+            "Use this when asked 'Remember that...', 'Note down...', or given explicit facts."
+        )
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "key": {
+                "type": "string",
+                "required": True,
+                "description": "Short unique identifier key for the fact (e.g. 'user_name')."
+            },
+            "value": {
+                "type": "string",
+                "required": True,
+                "description": "The fact or preference value to store (e.g. 'Alex')."
+            }
+        }
+
+    async def execute(self, key: str = "", value: Any = "", **kwargs: Any) -> Dict[str, Any]:
+        if not key or not str(key).strip():
+            return {"error": "Missing required argument 'key'."}
+
+        if self.memory_manager is None:
+            from memory.manager import MemoryManager
+            self.memory_manager = MemoryManager()
+
+        rec = self.memory_manager.remember(key, value)
+        return {"status": "memory_stored", "key": key, "value": value}
+
+
+class QueryMemoryTool(BaseTool):
+    """
+    Tool to query or search stored facts in persistent memory.
+    """
+
+    def __init__(self, memory_manager: Optional[Any] = None) -> None:
+        self.memory_manager = memory_manager
+
+    @property
+    def name(self) -> str:
+        return "query_memory"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Queries or searches stored persistent memories and facts. "
+            "Use this when asked 'What do you remember about...?' or 'What is my...'."
+        )
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "query": {
+                "type": "string",
+                "required": False,
+                "description": "Query term to filter stored memories (e.g. 'coffee')."
+            }
+        }
+
+    async def execute(self, query: str = "", **kwargs: Any) -> Dict[str, Any]:
+        if self.memory_manager is None:
+            from memory.manager import MemoryManager
+            self.memory_manager = MemoryManager()
+
+        results = self.memory_manager.retrieve(query, limit=5)
+        return {"query": query, "count": len(results), "memories": results}
+
+
+class ForgetMemoryTool(BaseTool):
+    """
+    Tool to delete a stored fact from persistent memory.
+    """
+
+    def __init__(self, memory_manager: Optional[Any] = None) -> None:
+        self.memory_manager = memory_manager
+
+    @property
+    def name(self) -> str:
+        return "forget_fact"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Deletes a stored fact or preference from persistent memory. "
+            "Use this when asked 'Forget that...' or 'Delete memory for...'."
+        )
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "key": {
+                "type": "string",
+                "required": True,
+                "description": "Memory key identifier to delete (e.g. 'user_name')."
+            }
+        }
+
+    async def execute(self, key: str = "", **kwargs: Any) -> Dict[str, Any]:
+        if not key or not str(key).strip():
+            return {"error": "Missing required argument 'key'."}
+
+        if self.memory_manager is None:
+            from memory.manager import MemoryManager
+            self.memory_manager = MemoryManager()
+
+        removed = self.memory_manager.forget(key)
+        return {"key": key, "removed": removed}

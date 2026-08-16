@@ -13,7 +13,10 @@ from tools.system_tools import (
     SystemStatusTool,
     ListFilesTool,
     ReadFileTool,
-    RestrictedCommandTool
+    RestrictedCommandTool,
+    RememberTool,
+    QueryMemoryTool,
+    ForgetMemoryTool
 )
 
 __all__ = [
@@ -24,5 +27,8 @@ __all__ = [
     "SystemStatusTool",
     "ListFilesTool",
     "ReadFileTool",
-    "RestrictedCommandTool"
+    "RestrictedCommandTool",
+    "RememberTool",
+    "QueryMemoryTool",
+    "ForgetMemoryTool"
 ]

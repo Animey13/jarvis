@@ -7,8 +7,10 @@ utilizing local vector/document databases or file-based mechanisms.
 
 from memory.base import BaseMemory
 from memory.local_json import LocalJSONMemory
+from memory.manager import MemoryManager
 
 __all__ = [
     "BaseMemory",
     "LocalJSONMemory",
+    "MemoryManager",
 ]
