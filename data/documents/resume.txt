@@ -1,0 +1,4 @@
+Candidate Name: Alex Mercer
+Role: Lead AI Software Engineer
+Skills: Python, PyTorch, FastAPI, Ollama, Faster-Whisper, Vector Embeddings, RAG.
+Experience: Built production-grade local AI assistants and voice systems.

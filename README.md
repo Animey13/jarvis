@@ -53,51 +53,62 @@ JARVIS complies strictly with **Clean Architecture** and **SOLID** principles, u
 
 ---
 
-## ✨ Features
+## 🎭 End-to-End Demonstration Workflow
 
-- **Local Vector Embeddings & RAG**: Fully local, offline Retrieval-Augmented Generation (`rag/`) allowing JARVIS to ingest, index, search, and answer questions from local documents (`.txt`, `.md`, `.pdf`, `.docx`) using local TF-IDF vector embeddings, disk-backed vector store (`data/rag/vector_store.json`), and citation formatting.
-- **Custom Plugin Architecture & API Integrations**: Modular plugin infrastructure (`BasePlugin`, `PluginRegistry`, `PluginManager`) with explicit permission levels (`READ_ONLY`, `NETWORK`, `FILESYSTEM`, `SYSTEM`, `EXECUTION`), failure isolation, tool bridging, and graceful offline degradation.
-- **Built-in Plugins**: Includes `SystemPlugin` (diagnostics, datetime, file operations, math), `WeatherPlugin` (location forecasts via Open-Meteo with offline fallbacks), and `WebSearchPlugin` (provider-agnostic search engine via DuckDuckGo with offline fallbacks).
-- **Interactive Local Web Dashboard (FastAPI + WebSockets)**: Real-time graphical user interface displaying voice interaction state, scrolling live event feeds, conversation log, local documents panel, plugins management, registered tools, persistent memory management, and system diagnostics.
-- **Continuous Voice Interaction State Machine**: Formal state loop (`WAKING`, `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`, `INTERRUPTED`, `ERROR`, `SHUTDOWN`) with transition logging and deterministic state flow.
-- **Mid-Speech Voice Interruption**: Speak at any time while JARVIS is responding; playback immediately halts, audio queues flush, and your new command is captured.
-- **Hardware-Resilient Microphone Capture**: Auto-configures PortAudio/sounddevice to target system default ALSA inputs using native `float32` capture, automatically handling sample rate downsampling and clipping guards to deliver pristine 16 kHz mono PCM bytes to Whisper.
-- **Local Neural Speech Synthesis (Kokoro ONNX)**: Ultra-realistic local voice generation (default `af_sky` voice) executing ONNX models with zero cloud latency.
-- **Local Asynchronous LLM Orchestration**: Non-blocking `OllamaClient` communicating over local HTTP REST endpoints, featuring fail-safe spoken fallbacks.
-- **Dual Memory Subsystem**: Bounded short-term in-session conversation history paired with persistent, disk-backed JSON fact storage (`logs/persistent_memory.json`) featuring auto-recovery from corrupted files.
+Follow this demonstration workflow to exercise all JARVIS subsystems end-to-end:
 
----
-
-## 📚 RAG Subsystem & Document Ingestion Guide
-
-### Document Ingestion & Querying
-Ingest local documents (`.txt`, `.md`, `.pdf`, `.docx`) into `data/documents/`:
+### A. Start Dashboard & Voice Assistant
 ```bash
-# Upload document via Web Dashboard or copy file to data/documents/
-cp resume.pdf data/documents/
-```
-
-Ask voice queries like:
-- *"Jarvis, what does my resume say about machine learning?"*
-- *"Search my documents for internship experience."*
-- *"What does the project report say about the architecture?"*
-
-JARVIS routes the request through `SearchDocumentsTool` -> `RAGManager` -> `LocalVectorStore` -> `OllamaClient` -> `KokoroSynthesizer` naturally.
-
----
-
-## 🖥️ Web Dashboard Launch & Usage
-
-Launch the local Web Dashboard server:
-```bash
-# Launch Dashboard (REST & WebSockets on http://127.0.0.1:8000)
-python main.py dashboard
-
-# Launch Dashboard alongside background voice assistant loop
+# Launch Web Dashboard alongside background assistant loop
 python main.py dashboard --with-assistant
 ```
+Open browser at `http://127.0.0.1:8000`.
 
-Navigate to: `http://127.0.0.1:8000`
+### B. Ask a General Question
+- **Voice Input**: *"Jarvis, what is the capital of France?"*
+- **Pipeline**: Whisper -> JarvisCore -> Ollama (Llama3) -> Kokoro TTS.
+
+### C. Ask a System Question
+- **Voice Input**: *"Jarvis, how is the system running?"*
+- **Pipeline**: Whisper -> JarvisCore -> `SystemStatusTool` -> LLM Synthesis -> Kokoro TTS.
+
+### D. Ask a Weather Question
+- **Voice Input**: *"Jarvis, what's the weather in Jaipur?"*
+- **Pipeline**: Whisper -> JarvisCore -> `WeatherPlugin` (Open-Meteo REST API) -> Kokoro TTS.
+
+### E. Ask a Web Search Question
+- **Voice Input**: *"Jarvis, search the web for latest Python 3.12 features."*
+- **Pipeline**: Whisper -> JarvisCore -> `WebSearchPlugin` (DuckDuckGo Search) -> Kokoro TTS.
+
+### F. Ask a Question About an Indexed Document (RAG)
+- Place `resume.txt` in `data/documents/` and ask:
+- **Voice Input**: *"Jarvis, search my documents for Alex Mercer's skills."*
+- **Pipeline**: Whisper -> JarvisCore -> `SearchDocumentsTool` -> `RAGManager` -> `LocalVectorStore` -> Ollama -> Kokoro TTS.
+
+### G. Demonstrate Persistent Memory
+- **Voice Input**: *"Jarvis, remember that my favorite color is teal."*
+- **Voice Input**: *"Jarvis, what is my favorite color?"*
+- **Pipeline**: Whisper -> JarvisCore -> `RememberTool` -> Persistent Memory -> `QueryMemoryTool`.
+
+### H. Demonstrate Mid-Speech Interruption
+- While JARVIS is speaking a long response, speak into the microphone or issue a new command.
+- **Pipeline**: SpeechManager detects voice during `SPEAKING` -> Transitions to `INTERRUPTED` -> Halts playback -> Flushes queues -> Transitions to `LISTENING`.
+
+---
+
+## 🛠️ Technology Stack
+
+| Category | Component / Library | Description |
+| :--- | :--- | :--- |
+| **Language & Concurrency** | Python 3.12+, `asyncio` | Asynchronous non-blocking runtime event loop |
+| **Local RAG & Embeddings** | `LocalTFIDFEmbeddingProvider`, `LocalVectorStore` | Local document indexing (.txt, .md, .pdf, .docx) |
+| **Plugins Infrastructure** | `BasePlugin`, `PluginRegistry`, `PluginManager` | Dynamic loading, permission safety, tool bridging |
+| **Web Server & API** | `fastapi`, `uvicorn`, `pydantic`, `httpx` | Local REST API and WebSocket real-time server |
+| **CLI & UI** | `typer`, `rich` | Terminal rendering, banners, and structured commands |
+| **Speech-to-Text (STT)** | `faster-whisper`, `webrtcvad` | Offline Whisper CTranslate2 engine with WebRTC VAD |
+| **Text-to-Speech (TTS)** | `kokoro-onnx`, `soundfile` | High-fidelity local ONNX neural voice generator |
+| **LLM Inference** | `ollama`, `httpx` | Local offline Llama 3 / Ollama REST client |
+| **Testing** | `pytest`, `pytest-asyncio` | 100% automated test coverage across 17 test modules (88 tests) |
 
 ---
 
