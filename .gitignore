@@ -11,6 +11,12 @@ ENV/
 env/
 .env
 
+# Runtime Data & Vector DBs
+data/
+data/rag/
+data/documents/
+*.tmp
+
 # Configuration / Logs & Memory
 logs/*.log
 logs/*.json
