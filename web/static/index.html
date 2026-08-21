@@ -80,7 +80,24 @@
         </div>
       </section>
 
-      <!-- Panel 4: Installed Plugins & Status -->
+      <!-- Panel 4: RAG Local Documents -->
+      <section class="card panel-rag">
+        <div class="card-header">
+          <h2>📚 Local Documents (RAG)</h2>
+          <span class="count-tag" id="rag-count">0</span>
+        </div>
+        <div class="memory-body">
+          <form class="memory-form" id="rag-upload-form">
+            <input type="file" id="rag-file-input" accept=".txt,.md,.pdf,.docx" required style="font-size:0.75rem;">
+            <button type="submit" class="btn-sm primary">Upload & Index</button>
+          </form>
+          <div class="memory-list" id="rag-docs-list">
+            <!-- RAG documents render here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 5: Installed Plugins & Status -->
       <section class="card panel-plugins">
         <div class="card-header">
           <h2>🧩 Plugins</h2>
@@ -91,7 +108,7 @@
         </div>
       </section>
 
-      <!-- Panel 5: Registered Tools & Actions -->
+      <!-- Panel 6: Registered Tools & Actions -->
       <section class="card panel-tools">
         <div class="card-header">
           <h2>🛠️ Registered Tools</h2>
@@ -102,7 +119,7 @@
         </div>
       </section>
 
-      <!-- Panel 6: Persistent Memory Management -->
+      <!-- Panel 7: Persistent Memory Management -->
       <section class="card panel-memory">
         <div class="card-header">
           <h2>🧠 Persistent Memory</h2>
@@ -120,7 +137,7 @@
         </div>
       </section>
 
-      <!-- Panel 7: Host System Diagnostics & Controls -->
+      <!-- Panel 8: Host System Diagnostics & Controls -->
       <section class="card panel-system">
         <div class="card-header">
           <h2>📊 System Diagnostics</h2>

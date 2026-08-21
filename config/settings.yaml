@@ -64,3 +64,14 @@ plugins:
     enabled: true
   system:
     enabled: true
+
+rag:
+  enabled: true
+  data_dir: "data/rag"
+  documents_dir: "data/documents"
+  embedding_model: "local-tfidf"
+  chunk_size: 800
+  chunk_overlap: 120
+  top_k: 5
+  similarity_threshold: 0.25
+  max_context_tokens: 2000

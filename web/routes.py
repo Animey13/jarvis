@@ -5,18 +5,21 @@ Implements clean REST API endpoints communicating with existing JARVIS applicati
 components via clean abstractions.
 """
 
+import asyncio
 from datetime import datetime, timezone
 import logging
+import os
+from pathlib import Path
 import platform
 import sys
-import asyncio
 from typing import Any, Dict, List
 import httpx
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from config.config import settings
 from memory.manager import MemoryManager
 from plugins.manager import PluginManager
+from rag.manager import RAGManager
 from tools.system_tools import SystemStatusTool
 from web.schemas import (
     ChatRequest,
@@ -122,14 +125,23 @@ async def get_config() -> Dict[str, Any]:
             "web_search_enabled": settings.plugins.web_search_enabled,
             "system_enabled": settings.plugins.system_enabled,
         },
+        "rag": {
+            "enabled": settings.rag.enabled,
+            "data_dir": settings.rag.data_dir,
+            "documents_dir": settings.rag.documents_dir,
+            "embedding_model": settings.rag.embedding_model,
+            "chunk_size": settings.rag.chunk_size,
+            "top_k": settings.rag.top_k,
+        },
     }
 
 
+# -----------------------------------------------------------------------------
+# PLUGINS REST ENDPOINTS
+# -----------------------------------------------------------------------------
 @router.get("/plugins")
 async def get_plugins() -> Dict[str, Any]:
-    """
-    Returns registered plugins and their current status models.
-    """
+    """Returns registered plugins and status models."""
     pm = getattr(web_state.jarvis_core, "plugin_manager", None) if web_state.jarvis_core else None
     if not pm:
         pm = PluginManager(tool_registry=web_state.tool_registry)
@@ -144,9 +156,7 @@ async def get_plugins() -> Dict[str, Any]:
 
 @router.get("/plugins/{name}")
 async def get_plugin_details(name: str) -> Dict[str, Any]:
-    """
-    Returns detailed status for a specific plugin.
-    """
+    """Returns details for a specific plugin."""
     pm = getattr(web_state.jarvis_core, "plugin_manager", None) if web_state.jarvis_core else None
     if not pm:
         pm = PluginManager(tool_registry=web_state.tool_registry)
@@ -161,9 +171,7 @@ async def get_plugin_details(name: str) -> Dict[str, Any]:
 
 @router.post("/plugins/{name}/enable")
 async def enable_plugin(name: str) -> Dict[str, Any]:
-    """
-    Enables a plugin.
-    """
+    """Enables a plugin."""
     pm = getattr(web_state.jarvis_core, "plugin_manager", None) if web_state.jarvis_core else None
     if not pm:
         pm = PluginManager(tool_registry=web_state.tool_registry)
@@ -179,9 +187,7 @@ async def enable_plugin(name: str) -> Dict[str, Any]:
 
 @router.post("/plugins/{name}/disable")
 async def disable_plugin(name: str) -> Dict[str, Any]:
-    """
-    Disables a plugin.
-    """
+    """Disables a plugin."""
     pm = getattr(web_state.jarvis_core, "plugin_manager", None) if web_state.jarvis_core else None
     if not pm:
         pm = PluginManager(tool_registry=web_state.tool_registry)
@@ -195,11 +201,163 @@ async def disable_plugin(name: str) -> Dict[str, Any]:
     return {"status": "success", "plugin": name, "enabled": False}
 
 
+# -----------------------------------------------------------------------------
+# RAG DOCUMENTS REST ENDPOINTS
+# -----------------------------------------------------------------------------
+def _get_rag_manager() -> RAGManager:
+    if web_state.jarvis_core and getattr(web_state.jarvis_core, "rag_manager", None):
+        return web_state.jarvis_core.rag_manager
+    return RAGManager(
+        data_dir=settings.rag.data_dir,
+        documents_dir=settings.rag.documents_dir,
+        chunk_size=settings.rag.chunk_size,
+        chunk_overlap=settings.rag.chunk_overlap,
+        top_k=settings.rag.top_k,
+        similarity_threshold=settings.rag.similarity_threshold,
+    )
+
+
+@router.get("/rag/documents")
+async def list_rag_documents() -> Dict[str, Any]:
+    """Lists indexed documents and chunk statistics."""
+    rm = _get_rag_manager()
+    docs = rm.list_documents()
+    return {
+        "total_documents": len(docs),
+        "total_chunks": rm.vector_store.count_chunks(),
+        "documents": docs,
+    }
+
+
+@router.post("/rag/documents")
+async def upload_rag_document(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """
+    Uploads and indexes a local document safely with extension & size validation.
+    """
+    rm = _get_rag_manager()
+    filename = Path(file.filename or "upload.txt").name  # Sanitize path traversal
+
+    ext = Path(filename).suffix.lower()
+    allowed_exts = {".txt", ".md", ".pdf", ".docx", ".doc"}
+    if ext not in allowed_exts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file extension '{ext}'. Allowed: {list(allowed_exts)}",
+        )
+
+    event_bus.publish("rag_ingestion_started", data={"filename": filename})
+
+    target_path = rm.documents_dir / filename
+    try:
+        content_bytes = await file.read()
+        if len(content_bytes) > 20 * 1024 * 1024:  # 20MB safety limit
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File size exceeds maximum upload limit of 20MB.",
+            )
+
+        with open(target_path, "wb") as f:
+            f.write(content_bytes)
+
+        meta = rm.ingest_document(str(target_path), force_reindex=True)
+
+        event_bus.publish(
+            "rag_ingestion_completed",
+            data={"filename": filename, "chunks": meta.chunk_count if meta else 0},
+        )
+
+        return {
+            "status": "success",
+            "filename": filename,
+            "document_id": meta.document_id if meta else None,
+            "chunk_count": meta.chunk_count if meta else 0,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        event_bus.publish(
+            "rag_ingestion_failed", data={"filename": filename, "error": str(e)}
+        )
+        logger.error("Failed uploading/ingesting document '%s': %s", filename, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to ingest document: {e}",
+        )
+
+
+@router.delete("/rag/documents/{document_id}")
+async def delete_rag_document(document_id: str) -> Dict[str, Any]:
+    """Deletes an indexed document by ID."""
+    rm = _get_rag_manager()
+    removed = rm.remove_document(document_id)
+    if not removed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document ID '{document_id}' not found.",
+        )
+    event_bus.publish("rag_index_updated", data={"action": "delete", "document_id": document_id})
+    return {"status": "success", "document_id": document_id, "removed": True}
+
+
+@router.post("/rag/index")
+async def index_rag_directory() -> Dict[str, Any]:
+    """Scans and indexes documents in configured documents directory."""
+    rm = _get_rag_manager()
+    ingested = rm.ingest_directory()
+    event_bus.publish("rag_index_updated", data={"action": "index_directory", "count": len(ingested)})
+    return {"status": "success", "ingested_count": len(ingested)}
+
+
+@router.post("/rag/rebuild")
+async def rebuild_rag_index() -> Dict[str, Any]:
+    """Clears vector store and rebuilds index from documents directory."""
+    rm = _get_rag_manager()
+    count = rm.rebuild_index()
+    event_bus.publish("rag_index_updated", data={"action": "rebuild", "count": count})
+    return {"status": "success", "indexed_documents": count}
+
+
+@router.delete("/rag/index")
+async def clear_rag_index() -> Dict[str, Any]:
+    """Clears all vector store indices."""
+    rm = _get_rag_manager()
+    rm.clear_index()
+    event_bus.publish("rag_index_updated", data={"action": "clear"})
+    return {"status": "success", "message": "RAG index cleared."}
+
+
+@router.post("/rag/search")
+async def search_rag_documents(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Performs semantic search across indexed document chunks."""
+    query = payload.get("query", "").strip()
+    top_k = payload.get("top_k", settings.rag.top_k)
+
+    if not query:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Search query cannot be empty.",
+        )
+
+    rm = _get_rag_manager()
+    results = rm.search(query=query, top_k=top_k)
+
+    event_bus.publish(
+        "rag_search", data={"query": query, "results_count": len(results)}
+    )
+
+    return {
+        "query": query,
+        "count": len(results),
+        "results": [r.model_dump() for r in results],
+    }
+
+
+# -----------------------------------------------------------------------------
+# TOOLS & MEMORY & CHAT REST ENDPOINTS
+# -----------------------------------------------------------------------------
 @router.get("/tools", response_model=ToolsListResponse)
 async def get_tools() -> ToolsListResponse:
-    """
-    Returns registered tools and recent execution log feed.
-    """
+    """Returns registered tools and recent execution log feed."""
     tool_registry = web_state.tool_registry
     tools_list: List[ToolInfo] = []
 
@@ -220,9 +378,7 @@ async def get_tools() -> ToolsListResponse:
 
 @router.get("/memory", response_model=MemoryListResponse)
 async def get_memory() -> MemoryListResponse:
-    """
-    Returns persistent and short-term memory information.
-    """
+    """Returns persistent and short-term memory information."""
     mem_mgr = web_state.memory_manager or MemoryManager()
     all_memories = mem_mgr.list_memory()
     short_term = mem_mgr.get_short_term_history()
@@ -236,9 +392,7 @@ async def get_memory() -> MemoryListResponse:
 
 @router.post("/memory")
 async def store_memory(req: RememberRequest) -> Dict[str, Any]:
-    """
-    Stores an intentional fact or preference into persistent memory.
-    """
+    """Stores an intentional fact or preference into persistent memory."""
     mem_mgr = web_state.memory_manager or MemoryManager()
     record = mem_mgr.remember(req.key, req.value, req.metadata)
 
@@ -252,9 +406,7 @@ async def store_memory(req: RememberRequest) -> Dict[str, Any]:
 
 @router.delete("/memory/{key}")
 async def forget_memory(key: str) -> Dict[str, Any]:
-    """
-    Deletes a fact from persistent memory.
-    """
+    """Deletes a fact from persistent memory."""
     mem_mgr = web_state.memory_manager or MemoryManager()
     removed = mem_mgr.forget(key)
 
@@ -274,9 +426,7 @@ async def forget_memory(key: str) -> Dict[str, Any]:
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
-    """
-    Processes a user text prompt using JarvisCore.
-    """
+    """Processes a user text prompt using JarvisCore."""
     jarvis_core = web_state.jarvis_core
     if not jarvis_core:
         from app.core import JarvisCore
@@ -297,9 +447,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
 @router.get("/system", response_model=SystemDiagnosticsResponse)
 async def get_system_diagnostics() -> SystemDiagnosticsResponse:
-    """
-    Gathers host hardware metrics and connectivity diagnostics.
-    """
+    """Gathers host hardware metrics and connectivity diagnostics."""
     status_tool = SystemStatusTool()
     sys_metrics = await status_tool.execute()
 
@@ -324,9 +472,7 @@ async def get_system_diagnostics() -> SystemDiagnosticsResponse:
 
 @router.post("/control", response_model=ControlResponse)
 async def control_runtime(req: ControlRequest) -> ControlResponse:
-    """
-    Handles runtime assistant control actions safely.
-    """
+    """Handles runtime assistant control actions safely."""
     action = req.action.lower().strip()
 
     if action == "stop":
@@ -362,7 +508,5 @@ async def control_runtime(req: ControlRequest) -> ControlResponse:
 
 @router.get("/events")
 async def get_recent_events(limit: int = 50) -> List[Dict[str, Any]]:
-    """
-    Returns recent live event log feed.
-    """
+    """Returns recent live event log feed."""
     return event_bus.get_recent_events(limit=limit)

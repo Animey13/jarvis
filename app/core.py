@@ -3,8 +3,8 @@ JARVIS Core Intelligence Layer Module.
 
 Provides the primary intelligence orchestrator (`JarvisCore`) that manages
 conversation context memory, persistent fact retrieval, system prompt rules,
-tool execution decision-making, asynchronous LLM execution, latency tracking,
-plugin manager integration, and graceful fallback handling for JARVIS.
+tool & plugin execution decision-making, RAG document search, asynchronous LLM execution,
+latency tracking, and graceful fallback handling for JARVIS.
 """
 
 import json
@@ -17,6 +17,9 @@ from llm.base import BaseLLMClient
 from llm.ollama import OllamaClient
 from memory.manager import MemoryManager
 from plugins.manager import PluginManager
+from rag.manager import RAGManager
+from rag.pipeline import RAGPipeline
+from tools.rag_tool import SearchDocumentsTool
 from tools.registry import ToolRegistry
 from tools.system_tools import (
     CalculatorTool,
@@ -46,7 +49,7 @@ class JarvisCore:
     """
     Dedicated JARVIS Core Intelligence Orchestrator.
     Manages short-term conversation context, persistent memory retrieval, system prompts,
-    tool & plugin execution decisions, LLM invocations, latency tracking, and fail-safe fallbacks.
+    tool & plugin & RAG execution decisions, LLM invocations, latency tracking, and fail-safe fallbacks.
     """
 
     def __init__(
@@ -56,6 +59,7 @@ class JarvisCore:
         tool_registry: Optional[ToolRegistry] = None,
         memory_manager: Optional[MemoryManager] = None,
         plugin_manager: Optional[PluginManager] = None,
+        rag_manager: Optional[RAGManager] = None,
         max_context_length: int = 10,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         fallback_response: str = DEFAULT_FALLBACK_RESPONSE,
@@ -86,6 +90,25 @@ class JarvisCore:
                 timeout=self.settings.llm.timeout,
             )
 
+        # RAG Subsystem Initialization
+        if rag_manager is not None:
+            self.rag_manager: RAGManager = rag_manager
+        else:
+            logger.info("Initializing default RAGManager in JarvisCore...")
+            self.rag_manager = RAGManager(
+                data_dir=self.settings.rag.data_dir,
+                documents_dir=self.settings.rag.documents_dir,
+                chunk_size=self.settings.rag.chunk_size,
+                chunk_overlap=self.settings.rag.chunk_overlap,
+                top_k=self.settings.rag.top_k,
+                similarity_threshold=self.settings.rag.similarity_threshold,
+            )
+
+        self.rag_pipeline = RAGPipeline(
+            retriever=self.rag_manager.retriever,
+            llm_client=self.llm_client,
+        )
+
         # Tool Registry Initialization
         if tool_registry is not None:
             self.tool_registry: ToolRegistry = tool_registry
@@ -101,6 +124,7 @@ class JarvisCore:
             self.tool_registry.register_tool(RememberTool(memory_manager=self.memory_manager))
             self.tool_registry.register_tool(QueryMemoryTool(memory_manager=self.memory_manager))
             self.tool_registry.register_tool(ForgetMemoryTool(memory_manager=self.memory_manager))
+            self.tool_registry.register_tool(SearchDocumentsTool(rag_manager=self.rag_manager))
 
         # Plugin Manager Initialization & Bridge
         if plugin_manager is not None:
@@ -194,11 +218,11 @@ class JarvisCore:
                 clean_response,
             )
 
-            # Check for tool / plugin execution decision tag
+            # Check for tool / plugin / RAG execution decision tag
             tool_call = self.tool_registry.parse_tool_call(clean_response)
             if tool_call:
                 tool_name, tool_args = tool_call
-                logger.info("Tool/Plugin decision detected -> Name: '%s', Arguments: %s", tool_name, tool_args)
+                logger.info("Tool/Plugin/RAG decision detected -> Name: '%s', Arguments: %s", tool_name, tool_args)
 
                 try:
                     from web.state import event_bus, web_state

@@ -20,8 +20,8 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
                          │              │              │
                          ▼              ▼              ▼
 ┌───────────────────────────┐ ┌────────────┐ ┌───────────────────┐
-│       SpeechManager       │ │ JarvisCore │ │   PluginManager   │
-│   (Formal State Machine:  │ │ (app/core) │ │   (plugins/)      │
+│       SpeechManager       │ │ JarvisCore │ │    RAGManager     │
+│   (Formal State Machine:  │ │ (app/core) │ │    (rag/)         │
 │  WAKING, LISTENING, etc.) │ └─────┬──────┘ └─────────┬─────────┘
 └─────────────┬─────────────┘       │                  │
               │                     ▼                  ▼
@@ -43,44 +43,44 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
 
 - **`app/`**: Core lifecycle controller, intelligence orchestrator, and console formatting (`assistant.py`, `core.py`, `logging_config.py`).
 - **`config/`**: Cascading YAML and environment-overridden configuration manager (`config.py`, `settings.yaml`).
-- **`plugins/`**: Custom plugin architecture, permission enums, registry, manager, and built-in plugins (`base.py`, `permissions.py`, `schemas.py`, `registry.py`, `manager.py`, `builtins/system.py`, `builtins/weather.py`, `builtins/web_search.py`).
+- **`rag/`**: Local vector embeddings, loaders, chunker, vector store, retriever, pipeline, citations, and manager (`schemas.py`, `loaders.py`, `chunker.py`, `embeddings.py`, `vector_store.py`, `retriever.py`, `pipeline.py`, `citations.py`, `manager.py`).
+- **`plugins/`**: Custom plugin architecture, permissions, registry, manager, and built-in plugins (`base.py`, `permissions.py`, `schemas.py`, `registry.py`, `manager.py`, `builtins/system.py`, `builtins/weather.py`, `builtins/web_search.py`).
 - **`speech/`**: Speech recognition, wake-word spotting, sounddevice stream captures, formal state machine orchestration, and neural speech synthesis (`interfaces.py`, `microphone.py`, `recognizer.py`, `wakeword.py`, `synthesizer.py`, `manager.py`).
 - **`llm/`**: Async client wrapper for local language models (`base.py`, `ollama.py`).
 - **`memory/`**: Short-term and persistent memory management layer (`base.py`, `local_json.py`, `manager.py`).
-- **`tools/`**: Local extensible OS, status, and memory tools registry (`base.py`, `registry.py`, `system_tools.py`).
+- **`tools/`**: Local extensible OS, status, memory, and RAG search tools registry (`base.py`, `registry.py`, `system_tools.py`, `rag_tool.py`).
 - **`web/`**: Local web dashboard, REST API router, Pydantic schemas, EventBus, WebSocket connection manager, and HTML5/CSS3/JS dark terminal frontend (`app.py`, `routes.py`, `schemas.py`, `state.py`, `websocket.py`, `static/`).
-- **`tests/`**: Full pytest coverage across 16 test modules (81 passing tests).
+- **`tests/`**: Full pytest coverage across 17 test modules (88 passing tests).
 
 ---
 
 ## 🏁 Completed Capabilities & Roadmap
 
-- **Phase 1: Foundation (Completed)**: Unified CLI shell (`main.py`), cascading YAML/environment settings, dual logging, and SIGINT graceful shutdown handling.
-- **Phase 2: Core Intelligence & LLM Orchestration (Completed)**: `JarvisCore` intelligence orchestrator, bounded context memory, Ollama client integration, and fail-safe spoken fallbacks.
-- **Phase 3: Tool & Action Execution System (Completed)**: Modular `BaseTool` interface, thread-safe `ToolRegistry`, parameter schema validation, and safe system tools.
-- **Phase 4: Memory System (Completed)**: `MemoryManager` short-term and persistent memory storage (`logs/persistent_memory.json`) with corrupted JSON recovery and memory tools.
-- **Phase 5: Natural Voice Interaction (Completed)**: Formal state machine (`SpeechState`), deterministic transitions, mid-speech interruption handling (`SPEAKING -> INTERRUPTED -> LISTENING`).
-- **Phase 6: Complete System Integration (Completed)**: Unified pipeline (**Microphone → Audio Capture → VAD → Wake Word → Listening → Faster-Whisper → JARVIS Core → Memory Retrieval → Tool Decision → Tool Execution → LLM Response → Kokoro TTS → Playback → Interruption Handling → Return to WAKING**).
+- **Phase 1: Foundation (Completed)**: Unified CLI shell, cascading PyYAML settings, dual logging, SIGINT handling.
+- **Phase 2: Core Intelligence & LLM Orchestration (Completed)**: `JarvisCore` intelligence orchestrator, bounded context memory, Ollama client integration, fail-safe spoken fallbacks.
+- **Phase 3: Tool & Action Execution System (Completed)**: Modular `BaseTool` interface, `ToolRegistry`, parameter schema validation, safe system tools.
+- **Phase 4: Memory System (Completed)**: `MemoryManager` short-term and persistent memory storage (`logs/persistent_memory.json`).
+- **Phase 5: Natural Voice Interaction (Completed)**: Formal state machine (`SpeechState`), mid-speech interruption handling.
+- **Phase 6: Complete System Integration (Completed)**: Unified end-to-end voice pipeline.
 - **Phase 7: Product Polish & Documentation (Completed)**: Refined console UX, clean logging, system docs.
-- **Phase 8: Web Dashboard & Modular GUI (Completed)**: FastAPI web dashboard (`web/`), WebSocket event streaming (`WS /ws`), REST API endpoints, HTML5/CSS3/Vanilla JS frontend.
-- **Phase 9: Custom Plugins & External Web API Integration (Completed - CURRENT)**:
-  - Built plugin infrastructure (`BasePlugin`, `PluginRegistry`, `PluginManager`, `PluginToolBridge`).
-  - Added explicit permission levels (`READ_ONLY`, `NETWORK`, `FILESYSTEM`, `SYSTEM`, `EXECUTION`).
-  - Built-in plugins: `SystemPlugin`, `WeatherPlugin` (Open-Meteo REST API with offline fallbacks), `WebSearchPlugin` (DuckDuckGo search with offline fallbacks).
-  - Web dashboard API integration (`GET /api/plugins`, `POST /api/plugins/{name}/enable`, `POST /api/plugins/{name}/disable`) and WebSocket plugin events.
-  - Full voice pipeline plugin integration ("Jarvis, what's the weather in Jaipur?").
+- **Phase 8: Web Dashboard & Modular GUI (Completed)**: FastAPI web dashboard (`web/`), WebSockets (`WS /ws`), REST API endpoints, HTML5/CSS3/JS frontend.
+- **Phase 9: Custom Plugins & External Web API Integration (Completed)**: Plugin infrastructure (`BasePlugin`, `PluginRegistry`, `PluginManager`), permission levels, built-in System, Weather, and Web Search plugins.
+- **Phase 10: Local Vector Embeddings & RAG (Completed - CURRENT)**:
+  - Local vector embeddings & RAG subsystem (`rag/`) supporting `.txt`, `.md`, `.pdf`, `.docx` document ingestion.
+  - Local `LocalTFIDFEmbeddingProvider`, sliding-window `TextChunker`, persistent `LocalVectorStore` (`data/rag/vector_store.json`), and `SemanticRetriever`.
+  - Incremental checksum-based document indexing skipping unchanged files.
+  - `SearchDocumentsTool` registered with `ToolRegistry` and `JarvisCore` for natural voice queries ("Jarvis, what does my resume say about machine learning?").
+  - Web dashboard REST endpoints (`/api/rag/*`) and WebSocket events (`rag_ingestion_completed`, `rag_index_updated`, `rag_search`).
 
 ---
 
 ## ✅ Runtime Verification & Test Status
 
-- 81 passing automated unit and integration tests across 16 test modules covering:
-  - Plugin interface, permissions, registry, dynamic discovery, enable/disable toggles, and failure isolation
-  - Built-in System, Weather, and Web Search plugins with provider abstractions and offline fallbacks
-  - Web dashboard REST API endpoints and WebSocket plugin events
-  - Complete system pipeline integration (`wake -> speech -> transcription -> memory -> tool/plugin decision -> LLM -> Kokoro TTS`)
-  - Tool registration, parameter validation, and AST calculator / restricted OS execution
-  - Memory persistence, corruption recovery, and bounded prompt injection
+- 88 passing automated unit and integration tests across 17 test modules covering:
+  - Document loaders (TXT, MD, PDF, DOCX), text chunking, local embeddings, vector store persistence
+  - Incremental indexing, semantic retrieval, citation formatting, SearchDocumentsTool
+  - Web dashboard RAG REST API endpoints and WebSocket events
+  - Complete voice and intelligence pipeline integration
 
 ---
 

@@ -1,7 +1,7 @@
 /**
  * JARVIS Web Dashboard Client Application Logic.
  * Pure Vanilla JavaScript managing WebSocket event streams, REST API updates,
- * real-time state visualization, conversation UI, plugins management, and system diagnostics.
+ * real-time state visualization, conversation UI, RAG document management, plugins, and system diagnostics.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -24,6 +24,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const eventsLog = document.getElementById('events-log');
   const clearEventsBtn = document.getElementById('clear-events-btn');
+
+  const ragCount = document.getElementById('rag-count');
+  const ragUploadForm = document.getElementById('rag-upload-form');
+  const ragFileInput = document.getElementById('rag-file-input');
+  const ragDocsList = document.getElementById('rag-docs-list');
 
   const pluginsCount = document.getElementById('plugins-count');
   const pluginsContainer = document.getElementById('plugins-container');
@@ -108,6 +113,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event.data && event.data.message) {
           appendChatMessage('assistant', event.data.message);
         }
+        break;
+      case 'rag_index_updated':
+      case 'rag_ingestion_completed':
+        fetchRagDocuments();
         break;
       case 'memory_update':
         fetchMemory();
@@ -205,7 +214,74 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 4. PLUGINS PANEL
+  // 4. RAG DOCUMENTS PANEL
+  // -------------------------------------------------------------------------
+  async function fetchRagDocuments() {
+    try {
+      const res = await fetch('/api/rag/documents');
+      const data = await res.json();
+
+      if (ragCount) ragCount.textContent = data.total_documents || 0;
+      if (!ragDocsList) return;
+      ragDocsList.innerHTML = '';
+
+      const docs = data.documents || [];
+      if (docs.length === 0) {
+        ragDocsList.innerHTML = '<div style="color: var(--text-muted); font-size: 0.75rem;">No local documents indexed.</div>';
+        return;
+      }
+
+      docs.forEach((doc) => {
+        const card = document.createElement('div');
+        card.className = 'mem-card';
+        card.innerHTML = `
+          <div>
+            <strong>📄 ${doc.filename}</strong> (${doc.file_type.toUpperCase()})
+            <div style="font-size:0.65rem; color:var(--text-muted)">Chunks: ${doc.chunk_count} | Size: ${doc.size_bytes}B</div>
+          </div>
+          <button class="btn-sm danger" data-id="${doc.document_id}">Delete</button>
+        `;
+        card.querySelector('button').addEventListener('click', () => deleteRagDocument(doc.document_id));
+        ragDocsList.appendChild(card);
+      });
+    } catch (err) {
+      console.error('Fetch RAG Documents Error:', err);
+    }
+  }
+
+  ragUploadForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const files = ragFileInput.files;
+    if (!files || files.length === 0) return;
+
+    const formData = new FormData();
+    formData.append('file', files[0]);
+
+    try {
+      await fetch('/api/rag/documents', {
+        method: 'POST',
+        body: formData,
+      });
+      ragFileInput.value = '';
+      fetchRagDocuments();
+    } catch (err) {
+      console.error('Upload Document Error:', err);
+    }
+  });
+
+  async function deleteRagDocument(documentId) {
+    try {
+      await fetch(`/api/rag/documents/${encodeURIComponent(documentId)}`, {
+        method: 'DELETE',
+      });
+      fetchRagDocuments();
+    } catch (err) {
+      console.error('Delete Document Error:', err);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 5. PLUGINS PANEL
   // -------------------------------------------------------------------------
   async function fetchPlugins() {
     try {
@@ -246,7 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------------------
-  // 5. MEMORY PANEL OPERATIONS
+  // 6. MEMORY PANEL OPERATIONS
   // -------------------------------------------------------------------------
   async function fetchMemory() {
     try {
@@ -312,7 +388,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------------------
-  // 6. TOOLS PANEL
+  // 7. TOOLS PANEL
   // -------------------------------------------------------------------------
   async function fetchTools() {
     try {
@@ -339,7 +415,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------------------
-  // 7. SYSTEM DIAGNOSTICS & STATUS POLLING
+  // 8. SYSTEM DIAGNOSTICS & STATUS POLLING
   // -------------------------------------------------------------------------
   async function fetchStatusAndDiagnostics() {
     try {
@@ -389,7 +465,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------------------
-  // 8. RUNTIME CONTROLS
+  // 9. RUNTIME CONTROLS
   // -------------------------------------------------------------------------
   btnStart.addEventListener('click', async () => {
     try {
@@ -421,6 +497,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // INITIALIZATION & POLLING LOOPS
   // -------------------------------------------------------------------------
   connectWebSocket();
+  fetchRagDocuments();
   fetchPlugins();
   fetchTools();
   fetchMemory();

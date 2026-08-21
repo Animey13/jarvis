@@ -115,6 +115,20 @@ class PluginsConfig:
 
 
 @dataclass
+class RAGConfig:
+    """RAG Subsystem settings."""
+    enabled: bool = True
+    data_dir: str = "data/rag"
+    documents_dir: str = "data/documents"
+    embedding_model: str = "local-tfidf"
+    chunk_size: int = 800
+    chunk_overlap: int = 120
+    top_k: int = 5
+    similarity_threshold: float = 0.25
+    max_context_tokens: int = 2000
+
+
+@dataclass
 class Settings:
     """Global Settings registry for JARVIS."""
     app: AppConfig = field(default_factory=AppConfig)
@@ -128,6 +142,7 @@ class Settings:
     piper: PiperConfig = field(default_factory=PiperConfig)
     kokoro: KokoroConfig = field(default_factory=KokoroConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
+    rag: RAGConfig = field(default_factory=RAGConfig)
 
     def get_log_file_path(self) -> Path:
         """
@@ -187,6 +202,7 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     piper_data: Dict[str, Any] = raw_config.get("piper", {})
     kokoro_data: Dict[str, Any] = raw_config.get("kokoro", {})
     plugins_data: Dict[str, Any] = raw_config.get("plugins", {})
+    rag_data: Dict[str, Any] = raw_config.get("rag", {})
 
     app_env = os.getenv("APP_ENV", app_data.get("env", "development"))
     app_debug_str = os.getenv("APP_DEBUG", str(app_data.get("debug", "true")))
@@ -289,6 +305,17 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     system_enabled_str = os.getenv("PLUGINS_SYSTEM_ENABLED", str(plugins_data.get("system", {}).get("enabled", "true")))
     system_enabled = system_enabled_str.lower() in ("true", "1", "yes")
 
+    rag_enabled_str = os.getenv("RAG_ENABLED", str(rag_data.get("enabled", "true")))
+    rag_enabled = rag_enabled_str.lower() in ("true", "1", "yes")
+    rag_data_dir = os.getenv("RAG_DATA_DIR", rag_data.get("data_dir", "data/rag"))
+    rag_docs_dir = os.getenv("RAG_DOCUMENTS_DIR", rag_data.get("documents_dir", "data/documents"))
+    rag_embed_model = os.getenv("RAG_EMBEDDING_MODEL", rag_data.get("embedding_model", "local-tfidf"))
+    rag_chunk_size = int(os.getenv("RAG_CHUNK_SIZE", str(rag_data.get("chunk_size", 800))))
+    rag_chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", str(rag_data.get("chunk_overlap", 120))))
+    rag_top_k = int(os.getenv("RAG_TOP_K", str(rag_data.get("top_k", 5))))
+    rag_sim_threshold = float(os.getenv("RAG_SIMILARITY_THRESHOLD", str(rag_data.get("similarity_threshold", 0.25))))
+    rag_max_tokens = int(os.getenv("RAG_MAX_CONTEXT_TOKENS", str(rag_data.get("max_context_tokens", 2000))))
+
     return Settings(
         app=AppConfig(name=app_name, env=app_env, debug=app_debug),
         logging=LoggingConfig(level=log_level, file_path=log_file_path, console_output=console_output),
@@ -301,6 +328,17 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
         piper=PiperConfig(voice=piper_voice, speed=piper_speed, piper_path=piper_path, use_simulator=piper_sim),
         kokoro=KokoroConfig(model=kokoro_model, voices=kokoro_voices, voice=kokoro_voice, speed=kokoro_speed, use_simulator=kokoro_sim),
         plugins=PluginsConfig(enabled=plugins_enabled, weather_enabled=weather_enabled, web_search_enabled=web_search_enabled, system_enabled=system_enabled),
+        rag=RAGConfig(
+            enabled=rag_enabled,
+            data_dir=rag_data_dir,
+            documents_dir=rag_docs_dir,
+            embedding_model=rag_embed_model,
+            chunk_size=rag_chunk_size,
+            chunk_overlap=rag_chunk_overlap,
+            top_k=rag_top_k,
+            similarity_threshold=rag_sim_threshold,
+            max_context_tokens=rag_max_tokens,
+        ),
     )
 
 
