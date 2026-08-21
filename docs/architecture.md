@@ -20,25 +20,26 @@ JARVIS adopts **Clean Architecture** combined with **Domain-Driven Design (DDD)*
                          │              │              │
                          ▼              ▼              ▼
 ┌───────────────────────────┐ ┌────────────┐ ┌───────────────────┐
-│       SpeechManager       │ │ JarvisCore │ │   MemoryManager   │
-│   (Formal State Machine:  │ │ (app/core) │ │ (Short/Persistent)│
-│  WAKING, LISTENING, etc.) │ └─────┬──────┘ └───────────────────┘
-└─────────────┬─────────────┘       │
-              │                     ▼
-              │              ┌──────────────┐
-              │              │ ToolRegistry │
-              │              │  (tools/)    │
-              │              └──────┬───────┘
-              │                     │
-              ▼                     ▼
-┌───────────────────────────┐┌──────────────┐
-│   Web Dashboard (FastAPI) ││ OllamaClient │
-│   REST API & WebSockets   │└──────────────┘
+│       SpeechManager       │ │ JarvisCore │ │   PluginManager   │
+│   (Formal State Machine:  │ │ (app/core) │ │  (plugins/)       │
+│  WAKING, LISTENING, etc.) │ └─────┬──────┘ └─────────┬─────────┘
+└─────────────┬─────────────┘       │                  │
+              │                     ▼                  ▼
+              │              ┌──────────────────────────┐
+              │              │       ToolRegistry       │
+              │              │        (tools/)          │
+              │              └────────────┬─────────────┘
+              │                           │
+              ▼                           ▼
+┌───────────────────────────┐      ┌──────────────┐
+│   Web Dashboard (FastAPI) │      │ OllamaClient │
+│   REST API & WebSockets   │      └──────────────┘
 └───────────────────────────┘
 ```
 
 ### Interface Segregation & Dependency Inversion
-All external system integrations (Language Models, Speech Synthesis, Memory Stores, UI displays) are defined as strict abstract interfaces (`ABC` / Protocols) under their respective directories:
+All external system integrations (Language Models, Custom Plugins, Speech Synthesis, Memory Stores, UI displays) are defined as strict abstract interfaces (`ABC` / Protocols):
+- `plugins/base.py` -> `BasePlugin`, `PluginToolBridge`
 - `llm/base.py` -> `BaseLLMClient`
 - `speech/interfaces.py` -> `AudioInput`, `SpeechRecognizer`, `SpeechSynthesizer`
 - `tools/base.py` -> `BaseTool`
@@ -47,47 +48,38 @@ All external system integrations (Language Models, Speech Synthesis, Memory Stor
 
 ---
 
-## 2. Web Dashboard Architecture (Phase 8)
+## 2. Custom Plugin Architecture (Phase 9)
+
+The Custom Plugin Architecture (`plugins/`) provides a secure, modular capability expansion framework that isolates failures and bridges capabilities into `ToolRegistry`.
+
+### Submodule Organization
+- `plugins/base.py`: Defines `BasePlugin` abstract class and `PluginToolBridge` adapter.
+- `plugins/permissions.py`: Defines `PluginPermission` enum (`READ_ONLY`, `NETWORK`, `FILESYSTEM`, `SYSTEM`, `EXECUTION`).
+- `plugins/schemas.py`: Pydantic V2 models for `PluginMetadata` and `PluginStatus`.
+- `plugins/registry.py`: Thread-safe `PluginRegistry` for plugin lookup, listing, status discovery, enable/disable toggles.
+- `plugins/manager.py`: `PluginManager` handling plugin loading, lifecycle, permission checks, failure isolation, and automatic tool synchronization.
+- `plugins/builtins/`: Native built-in plugins:
+  - `system.py`: `SystemPlugin` bridging datetime, calculator, system diagnostics, list files, read file, and restricted commands.
+  - `weather.py`: `WeatherPlugin` with `WeatherProviderInterface` (Open-Meteo REST API with offline fallback).
+  - `web_search.py`: `WebSearchPlugin` with `SearchProviderInterface` (DuckDuckGo search with offline fallback).
+
+---
+
+## 3. Web Dashboard Architecture (Phase 8 & Phase 9)
 
 The Web Dashboard subpackage (`web/`) provides a local, offline-first graphical user interface powered by **FastAPI**, **Pydantic**, and **WebSockets**.
 
 ### Submodule Organization
 - `web/app.py`: FastAPI server setup, static file mounting, lifespan event management.
-- `web/routes.py`: REST API endpoints for `/api/status`, `/api/config`, `/api/tools`, `/api/memory`, `/api/chat`, `/api/system`, `/api/control`, `/api/events`.
+- `web/routes.py`: REST API endpoints for `/api/status`, `/api/config`, `/api/plugins`, `/api/tools`, `/api/memory`, `/api/chat`, `/api/system`, `/api/control`, `/api/events`.
 - `web/websocket.py`: Thread-safe `WebSocketManager` managing connected clients and non-blocking JSON event broadcasts.
-- `web/state.py`: `EventBus` publishing structured system events (`state_change`, `transcription`, `user_message`, `assistant_message`, `tool_start`, `tool_complete`, `memory_update`, `error`) and `WebStateManager` aggregating application references.
-- `web/schemas.py`: Typed Pydantic data models for request validation and response formatting.
-- `web/static/`: Pure HTML5, CSS3, and Vanilla JavaScript dashboard UI (zero external CDN or framework dependencies).
-
-### Local Security Boundaries
-- **Local IP Binding**: Binds exclusively to `127.0.0.1` by default to prevent external network exposure.
-- **Controlled System Access**: File operations, command executions, and memory operations enforce strict allowlist and file size limits defined in the tool registry.
-- **Non-Blocking Execution**: Web calls route through `JarvisCore` asynchronously without blocking the voice loop or main event loop.
+- `web/state.py`: `EventBus` publishing structured system events (`state_change`, `transcription`, `user_message`, `assistant_message`, `tool_start`, `tool_complete`, `plugin_enabled`, `plugin_disabled`, `memory_update`, `error`).
+- `web/static/`: Pure HTML5, CSS3, and Vanilla JavaScript dashboard UI featuring Plugins management cards.
 
 ---
 
-## 3. SOLID Principles Applied
-
-### Single Responsibility Principle (SRP)
-- `config/config.py` loads settings from files/environments and resolves values.
-- `app/logging_config.py` configures console formatters and rotating files.
-- `app/core.py` manages LLM requests, system prompts, context bounding, and tool execution decisions.
-- `speech/manager.py` governs the formal voice interaction state machine.
-- `web/routes.py` translates REST requests into component method calls.
-
-### Open/Closed Principle (OCP)
-The registration systems for tools (`ToolRegistry`) and memory formats are open to extension (new tools can be added without modifying orchestration logic).
-
----
-
-## 4. Concurrency & Event Loop Model
+## 4. Concurrency & Failure Isolation Model
 
 JARVIS employs **asyncio** as its core runtime.
-- Blocking functions (such as reading terminal inputs or executing subprocess commands) run in separate executor thread pools (`loop.run_in_executor(None, ...)`).
-- WebSockets broadcast events asynchronously using non-blocking tasks (`loop.create_task(...)`), ensuring high-throughput UI updates without interrupting audio streaming or speech recognition.
-
----
-
-## 5. Platform Constraints & Standards
-- **Ubuntu 24.04+ & Python 3.12+ Compatibility**: Standard POSIX signal capturing (`SIGINT` and `SIGTERM`) on the event loop for graceful teardowns.
-- **Offline First**: Zero cloud dependencies or external CDN requirements.
+- Plugin executions are isolated inside try/except wrappers in `BasePlugin.execute_tool`, capturing errors in `plugin.last_error` while keeping `JarvisCore` and `SpeechManager` operational.
+- External API calls (Weather and Web Search) implement timeouts and graceful degradation to offline fallback responses when network access is unavailable or interrupted.

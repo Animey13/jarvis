@@ -4,7 +4,7 @@ JARVIS Core Intelligence Layer Module.
 Provides the primary intelligence orchestrator (`JarvisCore`) that manages
 conversation context memory, persistent fact retrieval, system prompt rules,
 tool execution decision-making, asynchronous LLM execution, latency tracking,
-and graceful fallback handling for JARVIS.
+plugin manager integration, and graceful fallback handling for JARVIS.
 """
 
 import json
@@ -16,6 +16,7 @@ from config.config import Settings
 from llm.base import BaseLLMClient
 from llm.ollama import OllamaClient
 from memory.manager import MemoryManager
+from plugins.manager import PluginManager
 from tools.registry import ToolRegistry
 from tools.system_tools import (
     CalculatorTool,
@@ -31,7 +32,6 @@ from tools.system_tools import (
 
 logger = logging.getLogger(__name__)
 
-# Default explicit system prompt establishing JARVIS persona and rules
 DEFAULT_SYSTEM_PROMPT: str = (
     "You are JARVIS, a local personal AI assistant. "
     "Provide short, concise, and natural spoken responses suitable for voice interaction. "
@@ -39,7 +39,6 @@ DEFAULT_SYSTEM_PROMPT: str = (
     "Acknowledge commands naturally and politely."
 )
 
-# Default short spoken fallback when the LLM service fails or is unreachable
 DEFAULT_FALLBACK_RESPONSE: str = "I'm sorry, I am currently unable to reach my local language model."
 
 
@@ -47,7 +46,7 @@ class JarvisCore:
     """
     Dedicated JARVIS Core Intelligence Orchestrator.
     Manages short-term conversation context, persistent memory retrieval, system prompts,
-    tool execution decisions, LLM invocations, latency tracking, and fail-safe fallbacks.
+    tool & plugin execution decisions, LLM invocations, latency tracking, and fail-safe fallbacks.
     """
 
     def __init__(
@@ -56,21 +55,13 @@ class JarvisCore:
         llm_client: Optional[BaseLLMClient] = None,
         tool_registry: Optional[ToolRegistry] = None,
         memory_manager: Optional[MemoryManager] = None,
+        plugin_manager: Optional[PluginManager] = None,
         max_context_length: int = 10,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         fallback_response: str = DEFAULT_FALLBACK_RESPONSE,
     ) -> None:
         """
         Initializes the JARVIS Core Intelligence orchestrator.
-
-        Args:
-            settings: Loaded system configuration settings.
-            llm_client: Optional custom LLM client instance; defaults to OllamaClient using settings.
-            tool_registry: Optional custom ToolRegistry instance; defaults to registering standard tools.
-            memory_manager: Optional custom MemoryManager instance; defaults to standard storage paths.
-            max_context_length: Maximum number of short-term conversation turns retained in memory.
-            system_prompt: System prompt defining persona and behavioral rules.
-            fallback_response: Spoken fallback text returned when LLM generation fails.
         """
         self.settings: Settings = settings
         self.max_context_length: int = max_context_length
@@ -111,42 +102,38 @@ class JarvisCore:
             self.tool_registry.register_tool(QueryMemoryTool(memory_manager=self.memory_manager))
             self.tool_registry.register_tool(ForgetMemoryTool(memory_manager=self.memory_manager))
 
+        # Plugin Manager Initialization & Bridge
+        if plugin_manager is not None:
+            self.plugin_manager: PluginManager = plugin_manager
+            self.plugin_manager.tool_registry = self.tool_registry
+            self.plugin_manager.sync_tools_with_registry()
+        else:
+            logger.info("Initializing default PluginManager in JarvisCore...")
+            plugins_config = getattr(settings, "plugins", {})
+            cfg_dict = {}
+            if hasattr(plugins_config, "__dict__"):
+                cfg_dict = plugins_config.__dict__
+            elif isinstance(plugins_config, dict):
+                cfg_dict = plugins_config
+
+            self.plugin_manager = PluginManager(
+                tool_registry=self.tool_registry,
+                config=cfg_dict
+            )
+
     @property
     def history(self) -> List[Any]:
-        """
-        Property providing compatibility with short-term history inspection.
-        """
         return self.memory_manager.get_short_term_history(limit=self.max_context_length)
 
     def add_turn(self, role: str, content: str) -> None:
-        """
-        Adds a conversation turn to short-term context memory.
-
-        Args:
-            role: Role of the message sender ('user' or 'assistant').
-            content: Message content.
-        """
         self.memory_manager.add_short_term_turn(role, content)
 
     def clear_context(self) -> None:
-        """
-        Clears short-term conversation history.
-        """
         self.memory_manager.clear_short_term()
 
     def build_prompt(self, user_text: str) -> str:
-        """
-        Formats short-term conversation history, relevant persistent memories, and current user text.
-
-        Args:
-            user_text: Current user input text.
-
-        Returns:
-            str: Formatted context prompt.
-        """
         prompt_parts: List[str] = []
 
-        # 1. Bounded persistent memory retrieval matching query (top 3 relevant memories)
         relevant_memories = self.memory_manager.retrieve(user_text, limit=3)
         if relevant_memories:
             prompt_parts.append("Relevant Persistent Facts & Preferences:")
@@ -154,7 +141,6 @@ class JarvisCore:
                 prompt_parts.append(f"- {rec.get('key')}: {rec.get('value')}")
             prompt_parts.append("")
 
-        # 2. Short-term conversation history
         short_history = self.memory_manager.get_short_term_history(limit=self.max_context_length)
         if short_history:
             prompt_parts.append("Recent conversation history:")
@@ -167,27 +153,10 @@ class JarvisCore:
         return "\n".join(prompt_parts)
 
     def build_system_prompt(self) -> str:
-        """
-        Combines base persona instructions with available tool descriptions.
-
-        Returns:
-            str: Full system prompt text.
-        """
         tools_desc = self.tool_registry.get_tools_prompt_description()
         return f"{self.system_prompt}\n\n{tools_desc}"
 
     async def respond(self, user_text: str) -> str:
-        """
-        Main public interface method: receives user text, queries LLM asynchronously,
-        evaluates tool calls, executes tools, updates context memory, logs metrics/latency,
-        and returns final response.
-
-        Args:
-            user_text: Transcribed input text from user.
-
-        Returns:
-            str: Generated natural language response or fallback message.
-        """
         if not user_text or not str(user_text).strip():
             logger.warning("JarvisCore received empty user text input.")
             return "I didn't hear anything. How can I help you?"
@@ -225,11 +194,11 @@ class JarvisCore:
                 clean_response,
             )
 
-            # Check for tool execution decision tag
+            # Check for tool / plugin execution decision tag
             tool_call = self.tool_registry.parse_tool_call(clean_response)
             if tool_call:
                 tool_name, tool_args = tool_call
-                logger.info("Tool decision detected -> Name: '%s', Arguments: %s", tool_name, tool_args)
+                logger.info("Tool/Plugin decision detected -> Name: '%s', Arguments: %s", tool_name, tool_args)
 
                 try:
                     from web.state import event_bus, web_state
@@ -251,7 +220,6 @@ class JarvisCore:
                 except Exception:
                     pass
 
-                # Formulate follow-up synthesis turn for LLM
                 follow_up_prompt = (
                     f"{full_prompt}\n\n"
                     f"[Tool Execution Output for '{tool_name}']:\n"
@@ -271,7 +239,6 @@ class JarvisCore:
                     logger.warning("Follow-up LLM tool synthesis failed: %s. Using raw tool output.", synth_err)
                     clean_response = f"I executed {tool_name} and received: {exec_res}"
 
-            # Store successful turn in short-term memory
             self.add_turn("user", clean_input)
             self.add_turn("assistant", clean_response)
 

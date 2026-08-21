@@ -55,3 +55,12 @@ kokoro:
   voice: "af_sky"
   speed: 1.0
   use_simulator: false
+
+plugins:
+  enabled: true
+  weather:
+    enabled: true
+  web_search:
+    enabled: true
+  system:
+    enabled: true

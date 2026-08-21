@@ -13,11 +13,8 @@ from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 import yaml
 
-# Initialize basic logger for config bootstrap if needed,
-# though we will configure main logging later.
 logger = logging.getLogger(__name__)
 
-# Base directories
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_SETTINGS_PATH = BASE_DIR / "config" / "settings.yaml"
 
@@ -109,6 +106,15 @@ class KokoroConfig:
 
 
 @dataclass
+class PluginsConfig:
+    """Plugins global and plugin-specific settings."""
+    enabled: bool = True
+    weather_enabled: bool = True
+    web_search_enabled: bool = True
+    system_enabled: bool = True
+
+
+@dataclass
 class Settings:
     """Global Settings registry for JARVIS."""
     app: AppConfig = field(default_factory=AppConfig)
@@ -121,6 +127,7 @@ class Settings:
     wakeword: WakeWordConfig = field(default_factory=WakeWordConfig)
     piper: PiperConfig = field(default_factory=PiperConfig)
     kokoro: KokoroConfig = field(default_factory=KokoroConfig)
+    plugins: PluginsConfig = field(default_factory=PluginsConfig)
 
     def get_log_file_path(self) -> Path:
         """
@@ -132,7 +139,6 @@ class Settings:
         path = Path(self.logging.file_path)
         if not path.is_absolute():
             path = BASE_DIR / path
-        # Ensure directory exists
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -152,16 +158,13 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     Returns:
         Settings: An instance of Settings populated with merged values.
     """
-    # 1. Load environment variables from .env file
     load_dotenv(dotenv_path=BASE_DIR / ".env")
 
-    # 2. Set default path if not provided
     if settings_path is None:
         settings_path = DEFAULT_SETTINGS_PATH
 
     raw_config: Dict[str, Any] = {}
 
-    # 3. Read settings.yaml if it exists
     if settings_path.exists():
         try:
             with open(settings_path, "r", encoding="utf-8") as f:
@@ -173,7 +176,6 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     else:
         print(f"Warning: Settings file not found at {settings_path}. Using defaults.")
 
-    # 4. Extract sections with defaults
     app_data: Dict[str, Any] = raw_config.get("app", {})
     logging_data: Dict[str, Any] = raw_config.get("logging", {})
     llm_data: Dict[str, Any] = raw_config.get("llm", {})
@@ -184,22 +186,18 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     wakeword_data: Dict[str, Any] = raw_config.get("wakeword", {})
     piper_data: Dict[str, Any] = raw_config.get("piper", {})
     kokoro_data: Dict[str, Any] = raw_config.get("kokoro", {})
+    plugins_data: Dict[str, Any] = raw_config.get("plugins", {})
 
-    # 5. Environment variable overrides (Upper-case representation)
-
-    # App overrides
     app_env = os.getenv("APP_ENV", app_data.get("env", "development"))
     app_debug_str = os.getenv("APP_DEBUG", str(app_data.get("debug", "true")))
     app_debug = app_debug_str.lower() in ("true", "1", "yes")
     app_name = os.getenv("APP_NAME", app_data.get("name", "JARVIS"))
 
-    # Logging overrides
     log_level = os.getenv("LOG_LEVEL", logging_data.get("level", "INFO"))
     log_file_path = os.getenv("LOG_FILE_PATH", logging_data.get("file_path", "logs/jarvis.log"))
     console_output_str = os.getenv("LOG_CONSOLE_OUTPUT", str(logging_data.get("console_output", "true")))
     console_output = console_output_str.lower() in ("true", "1", "yes")
 
-    # LLM overrides
     llm_provider = os.getenv("LLM_PROVIDER", llm_data.get("provider", "ollama"))
     llm_model = os.getenv("LLM_MODEL", llm_data.get("model", "llama3:8b"))
     llm_api_base = os.getenv("LLM_API_BASE", llm_data.get("api_base", "http://localhost:11434"))
@@ -209,12 +207,10 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     except ValueError:
         llm_timeout = 30.0
 
-    # Speech overrides
     speech_input = os.getenv("SPEECH_INPUT_DEVICE", speech_data.get("input_device", "default"))
     speech_tts = os.getenv("SPEECH_TTS_PROVIDER", speech_data.get("tts_provider", "kokoro"))
     speech_voice = os.getenv("SPEECH_VOICE_ID", speech_data.get("voice_id", "af_sky"))
 
-    # Microphone overrides
     mic_device = os.getenv("MICROPHONE_DEVICE", mic_data.get("device", "default"))
     mic_sr_str = os.getenv("MICROPHONE_SAMPLE_RATE", str(mic_data.get("sample_rate", 16000)))
     try:
@@ -229,7 +225,6 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     mic_sim_str = os.getenv("MICROPHONE_USE_SIMULATOR", str(mic_data.get("use_simulator", "false")))
     mic_sim = mic_sim_str.lower() in ("true", "1", "yes")
 
-    # VAD overrides
     vad_sens_str = os.getenv("VAD_SENSITIVITY", str(vad_data.get("sensitivity", 3)))
     try:
         vad_sens = int(vad_sens_str)
@@ -246,14 +241,12 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     except ValueError:
         vad_min_speech = 0.3
 
-    # Whisper overrides
     whisper_model = os.getenv("WHISPER_MODEL", whisper_data.get("model", "tiny"))
     whisper_lang = os.getenv("WHISPER_LANGUAGE", whisper_data.get("language", "en"))
     whisper_comp = os.getenv("WHISPER_COMPUTE_TYPE", whisper_data.get("compute_type", "float32"))
     whisper_gpu_str = os.getenv("WHISPER_USE_GPU", str(whisper_data.get("use_gpu", "false")))
     whisper_gpu = whisper_gpu_str.lower() in ("true", "1", "yes")
 
-    # Wake Word overrides
     wakeword_phrase = os.getenv("WAKEWORD_PHRASE", wakeword_data.get("phrase", "jarvis"))
     wakeword_cooldown_str = os.getenv("WAKEWORD_COOLDOWN", str(wakeword_data.get("cooldown", 2.0)))
     try:
@@ -266,7 +259,6 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     except ValueError:
         wakeword_acc = 0.1
 
-    # Piper overrides
     piper_voice = os.getenv("PIPER_VOICE", piper_data.get("voice", "en_US-lessac-medium"))
     piper_speed_str = os.getenv("PIPER_SPEED", str(piper_data.get("speed", 1.0)))
     try:
@@ -277,7 +269,6 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     piper_sim_str = os.getenv("PIPER_USE_SIMULATOR", str(piper_data.get("use_simulator", "false")))
     piper_sim = piper_sim_str.lower() in ("true", "1", "yes")
 
-    # Kokoro overrides
     kokoro_model = os.getenv("KOKORO_MODEL", kokoro_data.get("model", "kokoro-v1.0.fp16.onnx"))
     kokoro_voices = os.getenv("KOKORO_VOICES", kokoro_data.get("voices", "voices-v1.0.bin"))
     kokoro_voice = os.getenv("KOKORO_VOICE", kokoro_data.get("voice", "af_sky"))
@@ -289,66 +280,28 @@ def load_settings(settings_path: Optional[Path] = None) -> Settings:
     kokoro_sim_str = os.getenv("KOKORO_USE_SIMULATOR", str(kokoro_data.get("use_simulator", "false")))
     kokoro_sim = kokoro_sim_str.lower() in ("true", "1", "yes")
 
-    # 6. Instantiate settings object
+    plugins_enabled_str = os.getenv("PLUGINS_ENABLED", str(plugins_data.get("enabled", "true")))
+    plugins_enabled = plugins_enabled_str.lower() in ("true", "1", "yes")
+    weather_enabled_str = os.getenv("PLUGINS_WEATHER_ENABLED", str(plugins_data.get("weather", {}).get("enabled", "true")))
+    weather_enabled = weather_enabled_str.lower() in ("true", "1", "yes")
+    web_search_enabled_str = os.getenv("PLUGINS_WEB_SEARCH_ENABLED", str(plugins_data.get("web_search", {}).get("enabled", "true")))
+    web_search_enabled = web_search_enabled_str.lower() in ("true", "1", "yes")
+    system_enabled_str = os.getenv("PLUGINS_SYSTEM_ENABLED", str(plugins_data.get("system", {}).get("enabled", "true")))
+    system_enabled = system_enabled_str.lower() in ("true", "1", "yes")
+
     return Settings(
-        app=AppConfig(
-            name=app_name,
-            env=app_env,
-            debug=app_debug
-        ),
-        logging=LoggingConfig(
-            level=log_level,
-            file_path=log_file_path,
-            console_output=console_output
-        ),
-        llm=LLMConfig(
-            provider=llm_provider,
-            model=llm_model,
-            api_base=llm_api_base,
-            timeout=llm_timeout
-        ),
-        speech=SpeechConfig(
-            input_device=speech_input,
-            tts_provider=speech_tts,
-            voice_id=speech_voice
-        ),
-        microphone=MicrophoneConfig(
-            device=mic_device,
-            sample_rate=mic_sr,
-            channels=mic_channels,
-            use_simulator=mic_sim
-        ),
-        vad=VADConfig(
-            sensitivity=vad_sens,
-            silence_timeout=vad_timeout,
-            min_speech_duration=vad_min_speech
-        ),
-        whisper=WhisperConfig(
-            model=whisper_model,
-            language=whisper_lang,
-            compute_type=whisper_comp,
-            use_gpu=whisper_gpu
-        ),
-        wakeword=WakeWordConfig(
-            phrase=wakeword_phrase,
-            cooldown=wakeword_cooldown,
-            ignore_accidental_probability=wakeword_acc
-        ),
-        piper=PiperConfig(
-            voice=piper_voice,
-            speed=piper_speed,
-            piper_path=piper_path,
-            use_simulator=piper_sim
-        ),
-        kokoro=KokoroConfig(
-            model=kokoro_model,
-            voices=kokoro_voices,
-            voice=kokoro_voice,
-            speed=kokoro_speed,
-            use_simulator=kokoro_sim
-        )
+        app=AppConfig(name=app_name, env=app_env, debug=app_debug),
+        logging=LoggingConfig(level=log_level, file_path=log_file_path, console_output=console_output),
+        llm=LLMConfig(provider=llm_provider, model=llm_model, api_base=llm_api_base, timeout=llm_timeout),
+        speech=SpeechConfig(input_device=speech_input, tts_provider=speech_tts, voice_id=speech_voice),
+        microphone=MicrophoneConfig(device=mic_device, sample_rate=mic_sr, channels=mic_channels, use_simulator=mic_sim),
+        vad=VADConfig(sensitivity=vad_sens, silence_timeout=vad_timeout, min_speech_duration=vad_min_speech),
+        whisper=WhisperConfig(model=whisper_model, language=whisper_lang, compute_type=whisper_comp, use_gpu=whisper_gpu),
+        wakeword=WakeWordConfig(phrase=wakeword_phrase, cooldown=wakeword_cooldown, ignore_accidental_probability=wakeword_acc),
+        piper=PiperConfig(voice=piper_voice, speed=piper_speed, piper_path=piper_path, use_simulator=piper_sim),
+        kokoro=KokoroConfig(model=kokoro_model, voices=kokoro_voices, voice=kokoro_voice, speed=kokoro_speed, use_simulator=kokoro_sim),
+        plugins=PluginsConfig(enabled=plugins_enabled, weather_enabled=weather_enabled, web_search_enabled=web_search_enabled, system_enabled=system_enabled),
     )
 
 
-# Singleton settings instance for global usage
 settings: Settings = load_settings()

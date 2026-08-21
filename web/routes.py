@@ -9,12 +9,14 @@ from datetime import datetime, timezone
 import logging
 import platform
 import sys
+import asyncio
 from typing import Any, Dict, List
 import httpx
 from fastapi import APIRouter, HTTPException, status
 
 from config.config import settings
 from memory.manager import MemoryManager
+from plugins.manager import PluginManager
 from tools.system_tools import SystemStatusTool
 from web.schemas import (
     ChatRequest,
@@ -50,7 +52,6 @@ async def get_status() -> StatusResponse:
     stt_status = "available" if (web_state.speech_manager and web_state.speech_manager.recognizer and web_state.speech_manager.recognizer.model is not None) else "simulation_fallback"
     tts_status = "available" if web_state.speech_manager else "simulated"
 
-    # Check Ollama connectivity
     ollama_status = "disconnected"
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
@@ -115,7 +116,83 @@ async def get_config() -> Dict[str, Any]:
             "phrase": settings.wakeword.phrase,
             "cooldown": settings.wakeword.cooldown,
         },
+        "plugins": {
+            "enabled": settings.plugins.enabled,
+            "weather_enabled": settings.plugins.weather_enabled,
+            "web_search_enabled": settings.plugins.web_search_enabled,
+            "system_enabled": settings.plugins.system_enabled,
+        },
     }
+
+
+@router.get("/plugins")
+async def get_plugins() -> Dict[str, Any]:
+    """
+    Returns registered plugins and their current status models.
+    """
+    pm = getattr(web_state.jarvis_core, "plugin_manager", None) if web_state.jarvis_core else None
+    if not pm:
+        pm = PluginManager(tool_registry=web_state.tool_registry)
+        await pm.initialize()
+
+    statuses = pm.get_plugin_statuses()
+    return {
+        "total_plugins": len(statuses),
+        "plugins": [s.model_dump() for s in statuses]
+    }
+
+
+@router.get("/plugins/{name}")
+async def get_plugin_details(name: str) -> Dict[str, Any]:
+    """
+    Returns detailed status for a specific plugin.
+    """
+    pm = getattr(web_state.jarvis_core, "plugin_manager", None) if web_state.jarvis_core else None
+    if not pm:
+        pm = PluginManager(tool_registry=web_state.tool_registry)
+        await pm.initialize()
+
+    plugin = pm.registry.get(name)
+    if not plugin:
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found.")
+
+    return plugin.get_status().model_dump()
+
+
+@router.post("/plugins/{name}/enable")
+async def enable_plugin(name: str) -> Dict[str, Any]:
+    """
+    Enables a plugin.
+    """
+    pm = getattr(web_state.jarvis_core, "plugin_manager", None) if web_state.jarvis_core else None
+    if not pm:
+        pm = PluginManager(tool_registry=web_state.tool_registry)
+        await pm.initialize()
+
+    success = pm.enable_plugin(name)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found.")
+
+    event_bus.publish("plugin_enabled", data={"plugin": name})
+    return {"status": "success", "plugin": name, "enabled": True}
+
+
+@router.post("/plugins/{name}/disable")
+async def disable_plugin(name: str) -> Dict[str, Any]:
+    """
+    Disables a plugin.
+    """
+    pm = getattr(web_state.jarvis_core, "plugin_manager", None) if web_state.jarvis_core else None
+    if not pm:
+        pm = PluginManager(tool_registry=web_state.tool_registry)
+        await pm.initialize()
+
+    success = pm.disable_plugin(name)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found.")
+
+    event_bus.publish("plugin_disabled", data={"plugin": name})
+    return {"status": "success", "plugin": name, "enabled": False}
 
 
 @router.get("/tools", response_model=ToolsListResponse)
@@ -165,7 +242,6 @@ async def store_memory(req: RememberRequest) -> Dict[str, Any]:
     mem_mgr = web_state.memory_manager or MemoryManager()
     record = mem_mgr.remember(req.key, req.value, req.metadata)
 
-    # Publish memory update event
     event_bus.publish(
         event_type="memory_update",
         data={"action": "remember", "key": req.key, "value": req.value}
@@ -188,7 +264,6 @@ async def forget_memory(key: str) -> Dict[str, Any]:
             detail=f"Memory key '{key}' not found."
         )
 
-    # Publish memory update event
     event_bus.publish(
         event_type="memory_update",
         data={"action": "forget", "key": key}
@@ -209,7 +284,6 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     event_bus.publish("user_message", data={"message": req.message})
 
-    # Query JarvisCore
     response_text = await jarvis_core.respond(req.message)
 
     event_bus.publish("assistant_message", data={"message": response_text})

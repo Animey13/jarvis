@@ -1,7 +1,7 @@
 /**
  * JARVIS Web Dashboard Client Application Logic.
  * Pure Vanilla JavaScript managing WebSocket event streams, REST API updates,
- * real-time state visualization, conversation UI, and system diagnostics.
+ * real-time state visualization, conversation UI, plugins management, and system diagnostics.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -24,6 +24,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const eventsLog = document.getElementById('events-log');
   const clearEventsBtn = document.getElementById('clear-events-btn');
+
+  const pluginsCount = document.getElementById('plugins-count');
+  const pluginsContainer = document.getElementById('plugins-container');
 
   const toolsCount = document.getElementById('tools-count');
   const toolsContainer = document.getElementById('tools-container');
@@ -112,6 +115,11 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'tool_complete':
         fetchTools();
         break;
+      case 'plugin_enabled':
+      case 'plugin_disabled':
+        fetchPlugins();
+        fetchTools();
+        break;
       default:
         break;
     }
@@ -197,7 +205,48 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 4. MEMORY PANEL OPERATIONS
+  // 4. PLUGINS PANEL
+  // -------------------------------------------------------------------------
+  async function fetchPlugins() {
+    try {
+      const res = await fetch('/api/plugins');
+      const data = await res.json();
+
+      if (pluginsCount) pluginsCount.textContent = data.total_plugins || 0;
+      if (!pluginsContainer) return;
+      pluginsContainer.innerHTML = '';
+
+      (data.plugins || []).forEach((p) => {
+        const card = document.createElement('div');
+        card.className = 'tool-card';
+        const isEnabled = p.enabled;
+        const permsStr = (p.permissions || []).join(', ');
+        card.innerHTML = `
+          <div style="flex: 1;">
+            <div><strong>🧩 ${p.name}</strong> <span style="font-size:0.7rem; color:var(--text-muted)">v${p.version}</span></div>
+            <div style="color: var(--text-muted); font-size: 0.7rem; margin-top: 2px;">${p.description}</div>
+            <div style="font-size: 0.65rem; color: var(--accent-cyan); margin-top: 2px;">Perms: [${permsStr}]</div>
+          </div>
+          <button class="btn-sm ${isEnabled ? 'danger' : 'success'}" style="margin-left: 10px;">
+            ${isEnabled ? 'Disable' : 'Enable'}
+          </button>
+        `;
+        const btn = card.querySelector('button');
+        btn.addEventListener('click', async () => {
+          const endpoint = isEnabled ? `/api/plugins/${p.name}/disable` : `/api/plugins/${p.name}/enable`;
+          await fetch(endpoint, { method: 'POST' });
+          fetchPlugins();
+          fetchTools();
+        });
+        pluginsContainer.appendChild(card);
+      });
+    } catch (err) {
+      console.error('Fetch Plugins Error:', err);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 5. MEMORY PANEL OPERATIONS
   // -------------------------------------------------------------------------
   async function fetchMemory() {
     try {
@@ -263,7 +312,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------------------
-  // 5. TOOLS PANEL
+  // 6. TOOLS PANEL
   // -------------------------------------------------------------------------
   async function fetchTools() {
     try {
@@ -290,7 +339,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------------------
-  // 6. SYSTEM DIAGNOSTICS & STATUS POLLING
+  // 7. SYSTEM DIAGNOSTICS & STATUS POLLING
   // -------------------------------------------------------------------------
   async function fetchStatusAndDiagnostics() {
     try {
@@ -302,7 +351,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const statusData = await statusRes.json();
       const diagData = await diagRes.json();
 
-      // Update Top Status Badges
       if (statusData.online) {
         appStatusDot.className = 'status-dot online';
         appStatusText.textContent = 'Online';
@@ -318,7 +366,6 @@ document.addEventListener('DOMContentLoaded', () => {
       ttsStatus.textContent = statusData.tts_status;
       ollamaStatus.textContent = statusData.ollama_status;
 
-      // Update System Gauges
       const cpu = diagData.cpu_load ? diagData.cpu_load['1_min'] || 0 : 0;
       const ram = diagData.memory ? diagData.memory.percent_used || 0 : 0;
       const disk = diagData.disk ? diagData.disk.percent_used || 0 : 0;
@@ -342,7 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // -------------------------------------------------------------------------
-  // 7. RUNTIME CONTROLS
+  // 8. RUNTIME CONTROLS
   // -------------------------------------------------------------------------
   btnStart.addEventListener('click', async () => {
     try {
@@ -374,10 +421,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // INITIALIZATION & POLLING LOOPS
   // -------------------------------------------------------------------------
   connectWebSocket();
+  fetchPlugins();
   fetchTools();
   fetchMemory();
   fetchStatusAndDiagnostics();
 
-  // Poll system metrics every 5 seconds
   setInterval(fetchStatusAndDiagnostics, 5000);
 });
