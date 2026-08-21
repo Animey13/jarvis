@@ -231,7 +231,25 @@ class JarvisCore:
                 tool_name, tool_args = tool_call
                 logger.info("Tool decision detected -> Name: '%s', Arguments: %s", tool_name, tool_args)
 
+                try:
+                    from web.state import event_bus, web_state
+                    event_bus.publish("tool_start", data={"name": tool_name, "args": tool_args})
+                except Exception:
+                    pass
+
                 exec_res = await self.tool_registry.execute_tool(tool_name, **tool_args)
+
+                try:
+                    from web.state import event_bus, web_state
+                    event_bus.publish("tool_complete", data={"name": tool_name, "result": exec_res})
+                    web_state.record_tool_execution(
+                        name=tool_name,
+                        args=tool_args,
+                        status=exec_res.get("status", "completed"),
+                        result_summary=str(exec_res.get("result", exec_res.get("error", "")))[:100]
+                    )
+                except Exception:
+                    pass
 
                 # Formulate follow-up synthesis turn for LLM
                 follow_up_prompt = (

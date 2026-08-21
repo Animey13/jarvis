@@ -1,6 +1,6 @@
 # JARVIS: Local AI Assistant Platform
 
-JARVIS is a production-grade, offline-first local AI assistant platform designed for **Ubuntu 24.04+** and **Python 3.12+**. Built with a modular Clean Architecture, JARVIS provides real-time voice activation, local speech recognition (Faster Whisper), neural speech synthesis (Kokoro ONNX), local LLM orchestration (Ollama), bounded persistent memory, and safe local tool execution.
+JARVIS is a production-grade, offline-first local AI assistant platform designed for **Ubuntu 24.04+** and **Python 3.12+**. Built with a modular Clean Architecture, JARVIS provides real-time voice activation, local speech recognition (Faster Whisper), neural speech synthesis (Kokoro ONNX), local LLM orchestration (Ollama), bounded persistent memory, safe local tool execution, and an interactive local **Web Dashboard** (FastAPI + WebSockets).
 
 ```
       ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
@@ -15,7 +15,7 @@ JARVIS is a production-grade, offline-first local AI assistant platform designed
 
 ## 🏛️ Architecture & System Blueprint
 
-JARVIS complies strictly with **Clean Architecture** and **SOLID** principles, utilizing asynchronous Python (`asyncio`) to coordinate all voice, memory, tool, and LLM subsystems without blocking execution.
+JARVIS complies strictly with **Clean Architecture** and **SOLID** principles, utilizing asynchronous Python (`asyncio`) to coordinate all voice, memory, tool, LLM, and web dashboard subsystems without blocking execution.
 
 ```
                                ┌──────────────────────────┐
@@ -55,6 +55,7 @@ JARVIS complies strictly with **Clean Architecture** and **SOLID** principles, u
 
 ## ✨ Features
 
+- **Interactive Local Web Dashboard (FastAPI + WebSockets)**: Real-time graphical user interface displaying voice interaction state, scrolling live event feeds, conversation log, registered tools, persistent memory management, and system diagnostics.
 - **Continuous Voice Interaction State Machine**: Formal state loop (`WAKING`, `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`, `INTERRUPTED`, `ERROR`, `SHUTDOWN`) with transition logging and deterministic state flow.
 - **Mid-Speech Voice Interruption**: Speak at any time while JARVIS is responding; playback immediately halts, audio queues flush, and your new command is captured.
 - **Hardware-Resilient Microphone Capture**: Auto-configures PortAudio/sounddevice to target system default ALSA inputs using native `float32` capture, automatically handling sample rate downsampling and clipping guards to deliver pristine 16 kHz mono PCM bytes to Whisper.
@@ -70,12 +71,14 @@ JARVIS complies strictly with **Clean Architecture** and **SOLID** principles, u
 | Category | Component / Library | Description |
 | :--- | :--- | :--- |
 | **Language & Concurrency** | Python 3.12+, `asyncio` | Asynchronous non-blocking runtime event loop |
+| **Web Server & API** | `fastapi`, `uvicorn`, `pydantic` | Local REST API and WebSocket real-time server |
 | **CLI & UI** | `typer`, `rich` | Terminal rendering, banners, and structured commands |
+| **Frontend** | HTML5, CSS3, Vanilla JS | Offline-first dark terminal theme dashboard (zero CDNs) |
 | **Configuration** | `PyYAML`, `python-dotenv` | Cascading YAML & environment variable parser |
 | **Speech-to-Text (STT)** | `faster-whisper`, `webrtcvad` | Offline Whisper CTranslate2 engine with WebRTC VAD |
 | **Text-to-Speech (TTS)** | `kokoro-onnx`, `soundfile` | High-fidelity local ONNX neural voice generator |
 | **LLM Inference** | `ollama`, `httpx` | Local offline Llama 3 / Ollama REST client |
-| **Testing** | `pytest`, `pytest-asyncio` | 100% automated test coverage across 13 test modules |
+| **Testing** | `pytest`, `pytest-asyncio` | 100% automated test coverage across 14 test modules (74 tests) |
 
 ---
 
@@ -93,7 +96,7 @@ sudo apt install -y python3-pip python3-venv portaudio19-dev pulseaudio-utils al
 
 Clone the repository and set up a virtual environment:
 ```bash
-git clone https://github.com/your-username/jarvis.git
+git clone https://github.com/Animey13/jarvis.git
 cd jarvis
 
 python3 -m venv .venv
@@ -124,6 +127,63 @@ JARVIS utilizes **Ollama** for completely local LLM inference.
 
 ---
 
+## 🖥️ Web Dashboard Launch & Usage
+
+Launch the local Web Dashboard server:
+```bash
+# Launch Dashboard (REST & WebSockets on http://127.0.0.1:8000)
+python main.py dashboard
+
+# Launch Dashboard alongside background voice assistant loop
+python main.py dashboard --with-assistant
+
+# Specify custom host/port
+python main.py dashboard --host 127.0.0.1 --port 8080
+```
+
+Open your browser and navigate to:
+```
+http://127.0.0.1:8000
+```
+
+### Dashboard Panels & Features
+1. **Header Bar**: Live WebSocket connection badge and application status dot.
+2. **Voice Interaction State**: Current state display (`WAKING`, `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`, etc.) with animated wave visualizer and subsystem health badges.
+3. **Conversation Panel**: Interactive chat log displaying user prompts and JARVIS responses with an input box to send text queries.
+4. **Live Event Stream**: Real-time scrolling feed of structured system events (`state_change`, `transcription`, `tool_start`, `tool_complete`, `memory_update`, `error`).
+5. **Registered Tools**: Dynamic catalog of all registered tools with name, description, and parameter schemas.
+6. **Persistent Memory**: Manage persistent facts (`remember_fact` form and `forget_fact` buttons).
+7. **System Diagnostics**: Real-time CPU load, RAM usage, disk usage progress bars, uptime, Python version, and Start/Stop runtime controls.
+
+---
+
+## 🌐 REST API & WebSocket Specifications
+
+### REST Endpoints
+- `GET /api/status`: Returns subsystem statuses, current state, and uptime.
+- `GET /api/config`: Returns sanitized configuration settings.
+- `GET /api/tools`: Lists registered tools, parameter schemas, and tool execution logs.
+- `GET /api/memory`: Returns persistent and short-term memory stats.
+- `POST /api/memory`: Stores a fact into persistent memory (`{"key": "name", "value": "Alex"}`).
+- `DELETE /api/memory/{key}`: Removes a fact from persistent memory.
+- `POST /api/chat`: Text prompt query endpoint (`{"message": "Hello JARVIS"}`).
+- `GET /api/system`: Returns CPU, RAM, disk metrics, and Ollama status.
+- `POST /api/control`: Runtime controls (`{"action": "start"}` or `{"action": "stop"}`).
+- `GET /api/events`: Returns recent event log history feed.
+
+### WebSocket Endpoint
+- `WS /ws`: Broadcasts real-time JSON event objects (`state_change`, `transcription`, `user_message`, `assistant_message`, `tool_start`, `tool_complete`, `memory_update`, `error`).
+
+---
+
+## 🔒 Security Model
+
+- **Local Binding**: Binds exclusively to `127.0.0.1` by default to prevent unauthorized network access.
+- **No Arbitrary Shell / File Execution**: Tool execution enforces parameter schemas, safe AST arithmetic evaluation, and strict allowlists for system commands. File reading is capped at 10KB limits.
+- **Sanitized Configs**: `.env` secrets and credentials are never exposed via the Web API.
+
+---
+
 ## 🎙️ Microphone & Audio Requirements
 
 - **Input Format**: JARVIS captures 16 kHz mono audio for Whisper.
@@ -132,15 +192,18 @@ JARVIS utilizes **Ollama** for completely local LLM inference.
 
 ---
 
-## 🚀 Running JARVIS
+## 🚀 Running JARVIS CLI Commands
 
-JARVIS exposes an interactive CLI using `typer`:
+JARVIS exposes commands through `main.py` using `typer`:
 
 ```bash
 # Start JARVIS Voice & CLI Assistant
 python main.py start
 
-# Display current system configurations
+# Launch Web Dashboard
+python main.py dashboard
+
+# Display active system configurations
 python main.py config
 
 # Display release and platform versions
@@ -151,28 +214,6 @@ python main.py test-tts
 
 # Test microphone recording and STT independently
 python main.py test-mic
-```
-
----
-
-## 🔄 Voice Interaction Flow
-
-```
-1. Speak 'Jarvis' (WAKING state)
-   └─► VAD detects speech -> Wake word identified
-2. Transition to LISTENING state
-   └─► Console displays: 🎙️ [Wake Word] 'Jarvis' detected! Listening...
-3. Speak your command (e.g. "What time is it?")
-   └─► Silence detected -> Transition to TRANSCRIBING
-4. Faster Whisper yields transcript: "What time is it?"
-   └─► Transition to THINKING -> JarvisCore evaluates context & tools
-5. Tool decision triggered -> DateTimeTool executes
-   └─► Real-time date/time output passed to Ollama for response synthesis
-6. Transition to SPEAKING state
-   └─► Kokoro ONNX speaks synthesized response
-7. User Interruption (Optional)
-   └─► Speak mid-response -> Transition SPEAKING -> INTERRUPTED -> LISTENING
-8. Return to WAKING state
 ```
 
 ---
@@ -232,26 +273,23 @@ jarvis/
 │   ├── recognizer.py         # Faster-Whisper STT with WebRTC VAD and signal diagnostics
 │   ├── synthesizer.py        # Kokoro ONNX neural speech synthesizer with Piper fallback
 │   └── wakeword.py           # Custom wake-word engine and gating rules
-├── tests/                    # 100% passing automated test suite (65 tests across 13 modules)
+├── tests/                    # 100% passing automated test suite (74 tests across 14 modules)
 ├── tools/
 │   ├── base.py               # Abstract BaseTool interface with input parameter schemas
 │   ├── registry.py           # Thread-safe ToolRegistry with validation & structured logging
 │   └── system_tools.py       # Safe local tools (math, datetime, system, files, memory)
+├── web/                      # Phase 8 Web Dashboard & API Subpackage
+│   ├── app.py                # FastAPI web server and WebSocket endpoint
+│   ├── routes.py             # REST API router endpoints
+│   ├── schemas.py            # Typed Pydantic request and response schemas
+│   ├── state.py              # EventBus publisher and WebStateManager
+│   ├── websocket.py          # WebSocket connection & broadcast manager
+│   └── static/               # HTML5/CSS3/JS dark terminal theme dashboard assets
 ├── .env.example              # Environment variables template
 ├── main.py                   # Core CLI entry point (Typer)
 ├── PROJECT_STATUS.md         # Comprehensive project roadmap & completion status
 └── requirements.txt          # System Python dependencies
 ```
-
----
-
-## ❓ Troubleshooting
-
-| Issue | Solution |
-| :--- | :--- |
-| **PortAudio library not found** | Install `portaudio19-dev` using `sudo apt install -y portaudio19-dev`. JARVIS will fall back to virtual simulation mode automatically if hardware is missing. |
-| **Ollama Connection Error** | Ensure Ollama server is running locally via `ollama serve` and that `llama3:8b` model is pulled (`ollama pull llama3:8b`). |
-| **TTS Assets Missing** | Verify that `kokoro-v1.0.fp16.onnx` and `voices-v1.0.bin` are located inside `assets/`. JARVIS displays a subtitle warning if models are missing. |
 
 ---
 

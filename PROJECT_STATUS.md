@@ -32,9 +32,8 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
               │                     │
               ▼                     ▼
 ┌───────────────────────────┐┌──────────────┐
-│  Audio Capture (Default)  ││ OllamaClient │
-│    WebRTC VAD -> Whisper  │└──────────────┘
-│    Kokoro TTS Playback    │
+│   Web Dashboard (FastAPI) ││ OllamaClient │
+│   REST API & WebSockets   │└──────────────┘
 └───────────────────────────┘
 ```
 
@@ -48,7 +47,8 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
 - **`llm/`**: Async client wrapper for local language models (`base.py`, `ollama.py`).
 - **`memory/`**: Short-term and persistent memory management layer (`base.py`, `local_json.py`, `manager.py`).
 - **`tools/`**: Local extensible OS, status, and memory tools registry (`base.py`, `registry.py`, `system_tools.py`).
-- **`tests/`**: Full pytest coverage (`test_assistant.py`, `test_intelligence_layer.py`, `test_memory_system.py`, `test_state_machine.py`, `test_system_integration.py`, `test_tools.py`, `test_llm.py`, `test_speech.py`, `test_speech_transition.py`, `test_microphone_format.py`, etc.).
+- **`web/`**: Local web dashboard, REST API router, Pydantic schemas, EventBus, WebSocket connection manager, and HTML5/CSS3/JS dark terminal frontend (`app.py`, `routes.py`, `schemas.py`, `state.py`, `websocket.py`, `static/`).
+- **`tests/`**: Full pytest coverage (`test_assistant.py`, `test_intelligence_layer.py`, `test_memory_system.py`, `test_state_machine.py`, `test_system_integration.py`, `test_tools.py`, `test_web_dashboard.py`, `test_llm.py`, `test_speech.py`, `test_speech_transition.py`, `test_microphone_format.py`, etc.).
 
 ---
 
@@ -73,27 +73,34 @@ JARVIS is built using a clean, modular, and event-driven architecture that compl
   - Formalized state machine in `speech/manager.py` using `SpeechState` Enum (`WAKING`, `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`, `INTERRUPTED`, `ERROR`, `SHUTDOWN`).
   - Deterministic state transitions with explicit logging (`transition_to`).
   - Mid-speech interruption handling (`SPEAKING -> INTERRUPTED -> LISTENING`), halting playback, flushing audio queues, and capturing new commands immediately.
-  - Configurable timeouts (`listening_timeout`, `silence_timeout`, `maximum_command_duration`, `interruption_sensitivity`).
 - **Phase 6: Complete System Integration (Completed)**:
   - Seamlessly unified all subsystems into a single coherent JARVIS runtime: **Microphone → Audio Capture → VAD → Wake Word → Listening → Faster-Whisper → JARVIS Core → Memory Retrieval → Tool Decision → Tool Execution → LLM Response → Kokoro TTS → Playback → Interruption Handling → Return to WAKING**.
-- **Phase 7: Product Polish & Documentation (Completed - CURRENT)**:
+- **Phase 7: Product Polish & Documentation (Completed)**:
   - Cleaned runtime output, improved Rich console UX, clear state transition indicators, and clean user-friendly error messages.
-  - Comprehensive documentation across `README.md`, `PROJECT_STATUS.md`, and `docs/architecture.md`.
-  - Verified 100% clean startup and CLI interface execution.
+- **Phase 8: Web Dashboard & Modular GUI (Completed - CURRENT)**:
+  - Created a local FastAPI web dashboard (`web/`) featuring real-time WebSocket event streaming (`WS /ws`), REST API endpoints (`/api/status`, `/api/config`, `/api/tools`, `/api/memory`, `/api/chat`, `/api/system`, `/api/control`, `/api/events`), and Pydantic request/response validation.
+  - Built pure HTML5/CSS3/Vanilla JS offline-first dark terminal UI (`web/static/`) with active voice state visualizer, live scrolling event feed, chat interface, tools panel, persistent memory manager, system gauges, and runtime start/stop controls.
+  - Integrated `python main.py dashboard` CLI commands supporting local host binding (`127.0.0.1:8000`).
 
 ---
 
-## ⚠️ Known Limitations & Issues
+## ✅ Runtime Verification & Test Status
 
-1. **Hardware Microphone Echo Handling**: On open speaker setups without hardware echo cancellation, high speaker volume may bleed into the microphone during TTS playback. Softened via VAD sensitivity gating and interruption thresholds.
-2. **Local LLM Performance**: Inference speed is dependent on local GPU/CPU availability for Ollama. Timeouts default to 30s to accommodate slower CPU-only environments.
+- 74 passing automated unit and integration tests across 14 test modules covering:
+  - REST API status, config, tools, memory CRUD, chat, system diagnostics, and control endpoints
+  - WebSocket client connection, message parsing, and event broadcasting
+  - Complete system pipeline integration (`wake -> speech -> transcription -> memory -> tool decision -> LLM -> Kokoro TTS`)
+  - State machine transitions, interruption sequences, and task cancellations
+  - Tool registration, parameter validation, and AST calculator / restricted OS execution
+  - Memory persistence, corruption recovery, and bounded prompt injection
+- Validated end-to-end voice loop integration via `JarvisAssistant`, `SpeechManager`, and the Web Dashboard.
 
 ---
 
-## 🔮 Future Improvements
+## 🔮 Remaining Priorities & Next Steps
 
-1. **Phase 8: Web Dashboard & Modular GUI**: A web-based status dashboard providing real-time audio visualization, state logs, and chat controls.
-2. **Phase 9: Local Vector Embeddings (RAG)**: Integrating local vector stores (e.g. ChromaDB) for semantic file search.
+1. **Phase 9: Custom Plugins & External Web APIs** (e.g., local home automation, weather tools, custom web scrapers).
+2. **Phase 10: Local Vector Embeddings & RAG** (integrating local document databases like ChromaDB for semantic search).
 
 ---
 
@@ -107,4 +114,9 @@ pytest -v
 To run the interactive assistant console:
 ```bash
 python3 main.py start
+```
+
+To run the Web Dashboard:
+```bash
+python3 main.py dashboard
 ```

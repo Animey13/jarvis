@@ -133,6 +133,11 @@ class SpeechManager:
         if self.state != new_state:
             logger.info("Speech State Transition: %s -> %s", self.state.value, new_state.value)
             self.state = new_state
+            try:
+                from web.state import event_bus
+                event_bus.publish("state_change", data={"state": new_state.value})
+            except Exception:
+                pass
 
     def register_speech_callback(self, callback: Callable[[str], Awaitable[str]]) -> None:
         """
@@ -375,6 +380,12 @@ class SpeechManager:
                 logger.info("Transcribed audio yielded empty text. Discarding block.")
                 self.transition_to(SpeechState.WAKING)
                 return
+
+            try:
+                from web.state import event_bus
+                event_bus.publish("transcription", data={"text": clean_text})
+            except Exception:
+                pass
 
             self.console.print(f"[bold green]User prompt transcribed:[/bold green] [italic]'{clean_text}'[/italic]")
 

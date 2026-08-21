@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS - Local AI Assistant Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="dashboard-container">
+    <!-- Header Bar -->
+    <header class="top-bar">
+      <div class="brand">
+        <span class="logo-icon">🤖</span>
+        <span class="brand-title">JARVIS</span>
+        <span class="brand-version">v0.1.0</span>
+      </div>
+      <div class="status-badges">
+        <div class="badge" id="ws-status-badge">
+          <span class="status-dot offline" id="ws-dot"></span>
+          <span id="ws-status-text">WS Disconnected</span>
+        </div>
+        <div class="badge" id="app-status-badge">
+          <span class="status-dot offline" id="app-dot"></span>
+          <span id="app-status-text">Offline</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Dashboard Grid -->
+    <main class="grid-layout">
+
+      <!-- Panel 1: Voice State & Active State Visualizer -->
+      <section class="card panel-state">
+        <div class="card-header">
+          <h2>🎙️ Voice Interaction State</h2>
+          <span class="state-indicator" id="current-state-tag">OFFLINE</span>
+        </div>
+        <div class="state-visualizer">
+          <div class="state-wave-container" id="wave-box">
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+          </div>
+          <div class="subsystems-grid">
+            <div class="subsystem-item"><span class="label">Microphone:</span> <span id="mic-status">--</span></div>
+            <div class="subsystem-item"><span class="label">STT (Whisper):</span> <span id="stt-status">--</span></div>
+            <div class="subsystem-item"><span class="label">TTS (Kokoro):</span> <span id="tts-status">--</span></div>
+            <div class="subsystem-item"><span class="label">Ollama LLM:</span> <span id="ollama-status">--</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 2: Live Conversation & Text Input -->
+      <section class="card panel-chat">
+        <div class="card-header">
+          <h2>💬 Conversation</h2>
+        </div>
+        <div class="chat-log" id="chat-messages">
+          <div class="chat-turn system">
+            <div class="chat-bubble">JARVIS Dashboard initialized. Type a prompt or speak using the wake-word "Jarvis".</div>
+          </div>
+        </div>
+        <form class="chat-input-box" id="chat-form">
+          <input type="text" id="chat-input" placeholder="Type a message or command..." autocomplete="off">
+          <button type="submit" id="chat-submit-btn">Send</button>
+        </form>
+      </section>
+
+      <!-- Panel 3: Real-time Event Feed -->
+      <section class="card panel-events">
+        <div class="card-header">
+          <h2>⚡ Live Event Stream</h2>
+          <button class="btn-sm" id="clear-events-btn">Clear</button>
+        </div>
+        <div class="events-feed" id="events-log">
+          <!-- Live WebSocket event items append here -->
+        </div>
+      </section>
+
+      <!-- Panel 4: Registered Tools & Actions -->
+      <section class="card panel-tools">
+        <div class="card-header">
+          <h2>🛠️ Registered Tools</h2>
+          <span class="count-tag" id="tools-count">0</span>
+        </div>
+        <div class="tools-list" id="tools-container">
+          <!-- Tools render here -->
+        </div>
+      </section>
+
+      <!-- Panel 5: Persistent Memory Management -->
+      <section class="card panel-memory">
+        <div class="card-header">
+          <h2>🧠 Persistent Memory</h2>
+          <span class="count-tag" id="memory-count">0</span>
+        </div>
+        <div class="memory-body">
+          <form class="memory-form" id="memory-form">
+            <input type="text" id="mem-key" placeholder="Fact Key (e.g. user_name)" required>
+            <input type="text" id="mem-val" placeholder="Fact Value (e.g. Alex)" required>
+            <button type="submit" class="btn-sm primary">Remember</button>
+          </form>
+          <div class="memory-list" id="memory-items">
+            <!-- Persistent memories render here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 6: Host System Diagnostics & Controls -->
+      <section class="card panel-system">
+        <div class="card-header">
+          <h2>📊 System Diagnostics</h2>
+          <div class="runtime-controls">
+            <button class="btn-sm success" id="btn-start">Start</button>
+            <button class="btn-sm danger" id="btn-stop">Stop</button>
+          </div>
+        </div>
+        <div class="diagnostics-grid">
+          <div class="diag-item">
+            <div class="diag-label"><span>CPU Load (1m)</span> <span id="cpu-val">0%</span></div>
+            <div class="progress-bar"><div class="progress-fill" id="cpu-bar" style="width: 0%;"></div></div>
+          </div>
+          <div class="diag-item">
+            <div class="diag-label"><span>RAM Usage</span> <span id="ram-val">0%</span></div>
+            <div class="progress-bar"><div class="progress-fill" id="ram-bar" style="width: 0%;"></div></div>
+          </div>
+          <div class="diag-item">
+            <div class="diag-label"><span>Disk Space</span> <span id="disk-val">0%</span></div>
+            <div class="progress-bar"><div class="progress-fill" id="disk-bar" style="width: 0%;"></div></div>
+          </div>
+          <div class="diag-meta">
+            <div><span class="label">Uptime:</span> <span id="uptime-text">0s</span></div>
+            <div><span class="label">Python:</span> <span id="python-ver">--</span></div>
+            <div><span class="label">JARVIS:</span> <span id="jarvis-ver">--</span></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

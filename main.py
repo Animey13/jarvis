@@ -245,5 +245,52 @@ def test_mic() -> None:
         sys.exit(1)
 
 
+@app.command(name="dashboard")
+@app.command(name="web")
+def dashboard(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Bind host IP address"),
+    port: int = typer.Option(8000, "--port", "-p", help="Server port number"),
+    with_assistant: bool = typer.Option(False, "--with-assistant", help="Run background assistant loop alongside dashboard")
+) -> None:
+    """
+    Launch the JARVIS local web dashboard server (FastAPI + WebSockets).
+    """
+    import uvicorn
+    from web.app import app as fastapi_app
+    from web.state import web_state
+
+    configure_logging(
+        log_level=settings.logging.level,
+        log_file=settings.get_log_file_path(),
+        console_output=settings.logging.console_output
+    )
+
+    logger.info("Launching JARVIS Web Dashboard on http://%s:%d...", host, port)
+
+    assistant = JarvisAssistant(settings=settings)
+    web_state.set_references(
+        assistant=assistant,
+        speech_manager=assistant.speech_manager,
+        jarvis_core=assistant.jarvis_core,
+        memory_manager=assistant.jarvis_core.memory_manager,
+        tool_registry=assistant.jarvis_core.tool_registry
+    )
+
+    async def run_server():
+        config = uvicorn.Config(fastapi_app, host=host, port=port, log_level="info")
+        server = uvicorn.Server(config)
+        if with_assistant:
+            asyncio.create_task(assistant.start())
+        await server.serve()
+
+    try:
+        asyncio.run(run_server())
+    except KeyboardInterrupt:
+        logger.info("Dashboard server stopped by user.")
+    except Exception as e:
+        logger.critical("Dashboard server error: %s", e, exc_info=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     app()
